@@ -38,6 +38,10 @@ jobs:
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git add bot_state_paper.json trades_paper.csv bot_state_live.json trades_live.csv
+          for f in bot_state_paper.json bot_state_live.json trades_paper.csv trades_live.csv; do
+            if [ -f "$f" ]; then
+              git add "$f"
+            fi
+          done
           git commit -m "Save bot state and trades [skip ci]" || echo "No changes to commit"
           git push
