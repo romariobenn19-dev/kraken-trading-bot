@@ -17,7 +17,7 @@ class KrakenMarketOpportunityBot:
         self.max_open_positions = 4          # Max concurrent trades
         self.pct_per_trade = 0.15            # Allocate 15% of available USD cash per trade
         self.min_order_usd = 10.0            # Kraken minimum order value threshold
-        self.min_24h_volume_usd = 25000.0    # Ignores dead coins with low liquidity to prevent slippage
+        self.min_24h_volume_usd = 25000.0    # Ignores illiquid pairs to prevent slippage
 
         # Known volatile meme tokens get wider stops to prevent premature stop-outs
         self.known_meme_bases = {'DOGE', 'SHIB', 'PEPE', 'BONK', 'WIF', 'FLOKI', 'MEME', 'TURBO', 'BOME'}
@@ -72,7 +72,6 @@ class KrakenMarketOpportunityBot:
             balance = self.exchange.fetch_balance()
             free_usd = balance.get('free', {}).get(self.quote_currency, 0.0)
             
-            # Find tokens currently held with value > $5
             open_symbols = []
             for asset, amount in balance.get('free', {}).items():
                 if asset not in ['USD', 'USDT', 'USDC'] and amount > 0:
@@ -90,17 +89,15 @@ class KrakenMarketOpportunityBot:
 
     # ---------------- 5. STAGE 1: FULL MARKET SCANNER ----------------
     def scan_all_kraken_opportunities(self):
-        """Scans every active USD pair on Kraken and picks the top candidates showing momentum."""
+        """Scans every active USD pair on Kraken and picks top candidates showing momentum."""
         print("--> Fetching all market tickers across Kraken...")
         tickers = self.exchange.fetch_tickers()
         candidates = []
 
         for symbol, ticker in tickers.items():
-            # Filter strictly for active USD spot pairs
             if not symbol.endswith(f"/{self.quote_currency}"):
                 continue
             
-            # Basic sanity checks
             last_price = ticker.get('last')
             base_vol = ticker.get('baseVolume')
             if not last_price or not base_vol:
@@ -108,7 +105,7 @@ class KrakenMarketOpportunityBot:
 
             quote_volume_usd = base_vol * last_price
             if quote_volume_usd < self.min_24h_volume_usd:
-                continue  # Skip dead tokens with insufficient exit liquidity
+                continue  # Skip dead tokens
 
             pct_change = ticker.get('percentage', 0.0) or 0.0
             candidates.append({
@@ -118,17 +115,17 @@ class KrakenMarketOpportunityBot:
                 'change_24h': pct_change
             })
 
-        # Sort by highest momentum / volatility to find breakout opportunities first
+        # Rank by highest 24h price action to focus deep scans on breakout tokens
         candidates.sort(key=lambda x: abs(x['change_24h']), reverse=True)
         print(f"--> Found {len(candidates)} tradeable, liquid USD pairs on Kraken.")
-        # Return top 25 high-activity candidates for deep technical analysis
         return candidates[:25]
 
-    # ---------------- 6. STAGE 2: DEEP TECHNICAL ANALYSIS ----------------
+    # ---------------- 6. STAGE 2: NULL-SAFE TECHNICAL ANALYSIS ----------------
     def analyze_candidate(self, symbol):
         try:
-            candles = self.exchange.fetch_ohlcv(symbol, timeframe='15m', limit=150)
-            if not candles or len(candles) < 50:
+            # Request 250 candles so 200 EMA can calculate properly
+            candles = self.exchange.fetch_ohlcv(symbol, timeframe='15m', limit=250)
+            if not candles or len(candles) < 30:
                 return None
             df = pd.DataFrame(candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
 
@@ -141,8 +138,8 @@ class KrakenMarketOpportunityBot:
             df['rsi'] = ta.rsi(df['close'], length=14)
             macd_df = ta.macd(df['close'], fast=12, slow=26, signal=9)
             if macd_df is not None and not macd_df.empty:
-                hist_col = [col for col in macd_df.columns if 'h' in col.lower()][0]
-                df['MACDh'] = macd_df[hist_col]
+                hist_col = [col for col in macd_df.columns if 'h' in col.lower()]
+                df['MACDh'] = macd_df[hist_col[0]] if hist_col else 0.0
             else:
                 df['MACDh'] = 0.0
 
@@ -154,6 +151,10 @@ class KrakenMarketOpportunityBot:
 
             # Volatility (ATR)
             df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
+
+            # Validate that critical values exist on the latest candle
+            if pd.isna(df['atr'].iloc[-1]) or pd.isna(df['rsi'].iloc[-1]):
+                return None
 
             # Candlestick Formations
             body = df['close'] - df['open']
@@ -169,34 +170,45 @@ class KrakenMarketOpportunityBot:
         prev = df.iloc[-2]
         score = 0
 
-        # Trend bias
-        score += 15 if curr['close'] > curr['ema_200'] else -15
-        score += 10 if curr['ema_20'] > curr['ema_50'] else -10
+        # Safe Trend Evaluation: Fall back to 50 EMA if coin is too new for 200 EMA
+        if pd.notna(curr.get('ema_200')):
+            score += 15 if curr['close'] > curr['ema_200'] else -15
+        elif pd.notna(curr.get('ema_50')):
+            score += 15 if curr['close'] > curr['ema_50'] else -15
+
+        # EMA alignment
+        if pd.notna(curr.get('ema_20')) and pd.notna(curr.get('ema_50')):
+            score += 10 if curr['ema_20'] > curr['ema_50'] else -10
 
         # RSI Momentum
-        if curr['rsi'] < 30:
-            score += 15
-        elif curr['rsi'] > 70:
-            score -= 15
-        elif 45 <= curr['rsi'] <= 60:
-            score += 5
+        rsi = curr.get('rsi', 50)
+        if pd.notna(rsi):
+            if rsi < 30:
+                score += 15
+            elif rsi > 70:
+                score -= 15
+            elif 45 <= rsi <= 60:
+                score += 5
 
-        # MACD histogram crossover
-        if curr['MACDh'] > 0 and prev['MACDh'] <= 0:
-            score += 15
-        elif curr['MACDh'] < 0 and prev['MACDh'] >= 0:
-            score -= 15
+        # MACD Crossover
+        macdh_curr = curr.get('MACDh', 0.0)
+        macdh_prev = prev.get('MACDh', 0.0)
+        if pd.notna(macdh_curr) and pd.notna(macdh_prev):
+            if macdh_curr > 0 and macdh_prev <= 0:
+                score += 15
+            elif macdh_curr < 0 and macdh_prev >= 0:
+                score -= 15
 
         # Bollinger Bands bounds
-        if curr['close'] <= curr['BBL']:
+        if pd.notna(curr.get('BBL')) and curr['close'] <= curr['BBL']:
             score += 10
-        elif curr['close'] >= curr['BBU']:
+        elif pd.notna(curr.get('BBU')) and curr['close'] >= curr['BBU']:
             score -= 10
 
-        # Candlestick Action
-        if curr['bullish_engulfing']:
+        # Candlestick Formations
+        if curr.get('bullish_engulfing', False):
             score += 10
-        elif curr['bearish_engulfing']:
+        elif curr.get('bearish_engulfing', False):
             score -= 10
 
         # Sentiment weighting
@@ -204,7 +216,8 @@ class KrakenMarketOpportunityBot:
         score += int(news_sentiment * sentiment_weight)
         score += int(macro_sentiment * 10)
 
-        return score, curr['atr'], curr['close']
+        atr_val = curr['atr'] if pd.notna(curr.get('atr')) else (curr['close'] * 0.02)
+        return score, atr_val, curr['close']
 
     # ---------------- 7. EXECUTION ENGINE ----------------
     def execute_trade(self, symbol, side, amount, price=None, sl=None):
@@ -244,8 +257,6 @@ class KrakenMarketOpportunityBot:
 
         # Scan the entire exchange
         candidates = self.scan_all_kraken_opportunities()
-
-        # Track evaluated opportunities to select highest conviction
         evaluated = []
 
         for c in candidates:
@@ -276,7 +287,7 @@ class KrakenMarketOpportunityBot:
             print(f"[{e['symbol']}] Score: {e['score']}/100 | RSI: {e['rsi']:.1f} | Price: ${e['price']:.4f}")
 
         # Check for Exits on current open positions first
-        for sym in open_positions:
+        for sym in list(open_positions):
             base_coin = sym.split('/')[0]
             df = self.analyze_candidate(sym)
             if df is not None:
@@ -301,7 +312,6 @@ class KrakenMarketOpportunityBot:
             if sym in open_positions:
                 continue
 
-            # Minimum trigger threshold: Score >= 45
             if opp['score'] >= 45:
                 allocation_usd = free_usd * self.pct_per_trade
                 if allocation_usd < self.min_order_usd:
