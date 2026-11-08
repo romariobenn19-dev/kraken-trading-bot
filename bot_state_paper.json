@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "paper_cash": 1000.0,
+  "positions": {},
+  "cooldowns": {},
+  "day": {
+    "date": "2026-11-08",
+    "start_equity": 1000.0
+  },
+  "closed_trades": []
+}
