@@ -1,0 +1,29 @@
+name: 24/7 Crypto Bot Runner
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'  # Automatically executes every 15 minutes
+  workflow_dispatch:        # Gives you a manual "Run" button to test it instantly
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          pip install ccxt pandas pandas-ta nltk requests feedparser
+
+      - name: Execute Trading Check
+        env:
+          KRAKEN_API_KEY: ${{ secrets.KRAKEN_API_KEY }}
+          KRAKEN_PRIVATE_KEY: ${{ secrets.KRAKEN_PRIVATE_KEY }}
+        run: python bot.py
