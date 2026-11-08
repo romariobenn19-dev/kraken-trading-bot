@@ -2,8 +2,13 @@ name: 24/7 Crypto Bot Runner
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    # Runs at 2 minutes past every hour (allowing the hourly candle to close)
+    - cron: '2 * * * *'
   workflow_dispatch:
+
+concurrency:
+  group: bot-runner
+  cancel-in-progress: false
 
 jobs:
   run-bot:
@@ -11,6 +16,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -19,10 +26,18 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install ccxt pandas pandas-ta nltk requests feedparser
+          pip install ccxt pandas numpy requests
 
       - name: Execute Trading Check
         env:
           KRAKEN_API_KEY: ${{ secrets.KRAKEN_API_KEY }}
           KRAKEN_PRIVATE_KEY: ${{ secrets.KRAKEN_PRIVATE_KEY }}
-        run: python bot.py
+        run: python kraken_bot.py
+
+      - name: Commit and Push State Memory
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add bot_state_paper.json trades_paper.csv bot_state_live.json trades_live.csv
+          git commit -m "Save bot state and trades [skip ci]" || echo "No changes to commit"
+          git push
