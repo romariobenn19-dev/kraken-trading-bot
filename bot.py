@@ -15,7 +15,7 @@ class GitHubActionTradingBot:
         self.base_asset = 'BTC'
         self.timeframe = '15m'
         self.trade_qty_btc = 0.0005     # Position size
-        self.paper_trading = True       # Set to False ONLY when ready to trade real funds
+        self.paper_trading = True       # True = Simulation; False = Real Funds on Kraken
 
         self.kraken_api_key = os.getenv('KRAKEN_API_KEY')
         self.kraken_secret = os.getenv('KRAKEN_PRIVATE_KEY')
@@ -33,9 +33,9 @@ class GitHubActionTradingBot:
         self.sia = SentimentIntensityAnalyzer()
 
     def get_market_position(self):
-        """Checks Kraken balance to verify if we currently hold BTC."""
+        """Checks Kraken balance to verify if BTC is currently held."""
         if self.paper_trading:
-            return False  # In paper trading, defaults to evaluating entries
+            return False
         try:
             balance = self.exchange.fetch_balance()
             btc_free = balance.get('free', {}).get(self.base_asset, 0.0)
@@ -73,22 +73,37 @@ class GitHubActionTradingBot:
         candles = self.exchange.fetch_ohlcv(self.symbol, timeframe=self.timeframe, limit=200)
         df = pd.DataFrame(candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         
+        # Moving Averages (Trend)
         df['ema_20'] = ta.ema(df['close'], length=20)
         df['ema_50'] = ta.ema(df['close'], length=50)
         df['ema_200'] = ta.ema(df['close'], length=200)
         
+        # Momentum (RSI)
         df['rsi'] = ta.rsi(df['close'], length=14)
-        macd = ta.macd(df['close'], fast=12, slow=26, signal=9)
-        df = pd.concat([df, macd], axis=1)
         
-        bb = ta.bbands(df['close'], length=20, std=2.0)
-        df = pd.concat([df, bb], axis=1)
+        # MACD (Dynamic column extraction)
+        macd_df = ta.macd(df['close'], fast=12, slow=26, signal=9)
+        if macd_df is not None and not macd_df.empty:
+            hist_col = [col for col in macd_df.columns if 'h' in col.lower()][0]
+            df['MACDh'] = macd_df[hist_col]
+        else:
+            df['MACDh'] = 0.0
+
+        # Bollinger Bands (Calculated directly to prevent version naming mismatches)
+        sma20 = df['close'].rolling(window=20).mean()
+        std20 = df['close'].rolling(window=20).std()
+        df['BBL'] = sma20 - (2.0 * std20)
+        df['BBU'] = sma20 + (2.0 * std20)
+        
+        # Volatility (ATR)
         df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
 
+        # Candlestick Pattern Detection
         body = df['close'] - df['open']
         prev_body = body.shift(1)
         df['bullish_engulfing'] = (prev_body < 0) & (body > 0) & (df['close'] > df['open'].shift(1)) & (df['open'] < df['close'].shift(1))
         df['bearish_engulfing'] = (prev_body > 0) & (body < 0) & (df['close'] < df['open'].shift(1)) & (df['open'] > df['close'].shift(1))
+        
         return df
 
     def evaluate_confluence(self, df, news_sentiment, macro_sentiment):
@@ -96,9 +111,11 @@ class GitHubActionTradingBot:
         prev = df.iloc[-2]
         score = 0
 
+        # Trend alignment
         score += 15 if curr['close'] > curr['ema_200'] else -15
         score += 10 if curr['ema_20'] > curr['ema_50'] else -10
 
+        # RSI Momentum
         if curr['rsi'] < 30:
             score += 15
         elif curr['rsi'] > 70:
@@ -106,23 +123,28 @@ class GitHubActionTradingBot:
         elif 45 <= curr['rsi'] <= 60:
             score += 5
 
-        if curr['MACDh_12_26_9'] > 0 and prev['MACDh_12_26_9'] <= 0:
+        # MACD Histogram Crossover
+        if curr['MACDh'] > 0 and prev['MACDh'] <= 0:
             score += 15
-        elif curr['MACDh_12_26_9'] < 0 and prev['MACDh_12_26_9'] >= 0:
+        elif curr['MACDh'] < 0 and prev['MACDh'] >= 0:
             score -= 15
 
-        if curr['close'] <= curr['BBL_20_2.0']:
+        # Bollinger Bands Boundaries
+        if curr['close'] <= curr['BBL']:
             score += 10
-        elif curr['close'] >= curr['BBU_20_2.0']:
+        elif curr['close'] >= curr['BBU']:
             score -= 10
 
+        # Engulfing Candles
         if curr['bullish_engulfing']:
             score += 10
         elif curr['bearish_engulfing']:
             score -= 10
 
+        # Sentiment
         score += int(news_sentiment * 15)
         score += int(macro_sentiment * 10)
+        
         return score, curr['atr']
 
     def run_check(self):
