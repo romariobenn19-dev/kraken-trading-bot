@@ -2,8 +2,8 @@ name: 24/7 Crypto Bot Runner
 
 on:
   schedule:
-    - cron: '*/15 * * * *'  # Automatically executes every 15 minutes
-  workflow_dispatch:        # Gives you a manual "Run" button to test it instantly
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
 
 jobs:
   run-bot:
@@ -16,7 +16,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
 
       - name: Install Dependencies
         run: |
