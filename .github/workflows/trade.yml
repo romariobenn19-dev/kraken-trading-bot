@@ -2,10 +2,23 @@ name: 24/7 Crypto Bot Runner
 
 on:
   schedule:
-    # Runs at 2 minutes past every hour (allowing the hourly candle to close)
+    # 2 minutes past every hour. GitHub can delay scheduled runs by several
+    # minutes; the bot only uses closed candles, so that is fine.
     - cron: '2 * * * *'
   workflow_dispatch:
+    inputs:
+      action:
+        description: 'Manual run: normal run, or verify the Kraken keys and stop-order syntax'
+        type: choice
+        default: run
+        options:
+          - run
+          - check-live
 
+permissions:
+  contents: write
+
+# Never run two bot jobs at once.
 concurrency:
   group: bot-runner
   cancel-in-progress: false
@@ -13,11 +26,10 @@ concurrency:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -25,23 +37,38 @@ jobs:
           python-version: '3.12'
 
       - name: Install Dependencies
-        run: |
-          pip install ccxt pandas numpy requests
+        run: pip install ccxt pandas numpy requests
 
       - name: Execute Trading Check
         env:
           KRAKEN_API_KEY: ${{ secrets.KRAKEN_API_KEY }}
           KRAKEN_PRIVATE_KEY: ${{ secrets.KRAKEN_PRIVATE_KEY }}
-        run: python kraken_bot.py
-
-      - name: Commit and Push State Memory
+          ACTION: ${{ inputs.action }}
+          # Repo variable (Settings > Secrets and variables > Actions > Variables).
+          # Set LIVE_TRADING to true for real money; anything else = paper.
+          LIVE_TRADING: ${{ vars.LIVE_TRADING }}
         run: |
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          if [ "$ACTION" = "check-live" ]; then
+            python kraken_bot.py --check-live
+          elif [ "$LIVE_TRADING" = "true" ]; then
+            python kraken_bot.py --live --i-understand-the-risks
+          else
+            python kraken_bot.py
+          fi
+
+      # always(): save state even if the bot step failed part-way. In live mode
+      # a lost state file would leave a real position (and its stop order) that
+      # the bot no longer knows about.
+      - name: Commit and Push State Memory
+        if: always()
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
           for f in bot_state_paper.json bot_state_live.json trades_paper.csv trades_live.csv; do
             if [ -f "$f" ]; then
               git add "$f"
             fi
           done
           git commit -m "Save bot state and trades [skip ci]" || echo "No changes to commit"
+          git pull --rebase origin main
           git push
