@@ -1,7 +1,23 @@
 {
   "version": 1,
-  "paper_cash": 1000.0,
-  "positions": {},
+  "paper_cash": 846.5913055012093,
+  "positions": {
+    "PEPE/USD": {
+      "qty": 29704180.36,
+      "entry_price": 5.1235605e-06,
+      "entry_fee": 1.2175293214189742,
+      "sl": 4.872e-06,
+      "tp": 5.627e-06,
+      "atr": 1.0067672146354426e-07,
+      "sl_dist": 2.5169180365886064e-07,
+      "tp_dist": 5.033836073177213e-07,
+      "opened_at": "2026-11-09T09:26:17.256146+00:00",
+      "opened_ms": 1794216377256,
+      "last_checked_ms": 1794216377256,
+      "sl_order_id": null,
+      "unprotected": false
+    }
+  },
   "cooldowns": {},
   "day": {
     "date": "2026-11-09",
