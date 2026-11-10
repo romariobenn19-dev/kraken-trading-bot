@@ -9,7 +9,7 @@ kraken_bot.py - Kraken spot trend/pullback bot. PAPER TRADING BY DEFAULT.
     python kraken_bot.py --live --i-understand-the-risks      REAL MONEY
 
 Design notes
-  * Strategy logic lives in strategy.py (shared with backtest.py).
+  * Strategy logic lives in strategy.py (pure functions, no exchange access).
   * Separate state files for paper and live, so they can never be mixed up.
   * Only positions this bot opened are tracked/managed; your other holdings
     are never counted, sold, or sized against.
@@ -368,12 +368,18 @@ class Bot:
 
     def _new_position(self, qty, entry, fee, sl, tp, plan, atr) -> dict:
         now = utcnow()
+        now_ms = self.now_ms()
+        # Open time of the candle that is still forming at entry. Its post-entry
+        # price action must be checked once it closes, so last_checked_ms starts
+        # just before it (see _scan_candles for how that candle is treated).
+        entry_candle_ms = (now_ms // self.tf_ms) * self.tf_ms
         return {
             "qty": qty, "entry_price": entry, "entry_fee": fee,
             "sl": sl, "tp": tp, "atr": atr,
             "sl_dist": plan["sl_dist"], "tp_dist": plan["tp_dist"],
-            "opened_at": now.isoformat(), "opened_ms": self.now_ms(),
-            "last_checked_ms": self.now_ms(),
+            "opened_at": now.isoformat(), "opened_ms": now_ms,
+            "entry_candle_ms": entry_candle_ms,
+            "last_checked_ms": entry_candle_ms - 1,
             "sl_order_id": None, "unprotected": False,
         }
 
@@ -495,11 +501,21 @@ class Bot:
         Walk candles that CLOSED after the last check. Stop is tested before
         target (conservative when one candle spans both) and gaps fill at the open.
         Returns (reason, raw_price) or None.
+
+        The candle the position was opened in is special: part of it happened
+        before entry, so its open/high can't be used (they would fake a gap or
+        a take-profit). Only its low is checked against the stop, which is the
+        conservative choice: a dip to the stop after entry is never missed.
         """
         last_ms = pos.get("last_checked_ms", pos.get("opened_ms", 0))
+        entry_candle_ms = pos.get("entry_candle_ms")
         new = df[df["timestamp"] > last_ms]
         for row in new.itertuples(index=False):
             o, h, l = float(row.open), float(row.high), float(row.low)
+            if entry_candle_ms is not None and int(row.timestamp) == entry_candle_ms:
+                if check_stop and l <= pos["sl"]:
+                    return "stop", pos["sl"]
+                continue
             if check_stop:
                 if o <= pos["sl"]:
                     return "stop", o

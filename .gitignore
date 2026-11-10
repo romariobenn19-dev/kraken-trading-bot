@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+bot.log
+*.lock
+*.tmp
+*.corrupt-*
+.venv/

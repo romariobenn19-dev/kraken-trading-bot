@@ -29,31 +29,46 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
       - name: Install Dependencies
-        run: pip install ccxt pandas numpy requests
+        run: pip install -r requirements.txt
 
       - name: Execute Trading Check
         env:
           KRAKEN_API_KEY: ${{ secrets.KRAKEN_API_KEY }}
           KRAKEN_PRIVATE_KEY: ${{ secrets.KRAKEN_PRIVATE_KEY }}
           ACTION: ${{ inputs.action }}
-          # Repo variable (Settings > Secrets and variables > Actions > Variables).
-          # Set LIVE_TRADING to true for real money; anything else = paper.
+          # Repo variables (Settings > Secrets and variables > Actions > Variables).
+          # LIVE_TRADING: set to true for real money; anything else = paper.
           LIVE_TRADING: ${{ vars.LIVE_TRADING }}
+          # FEE_RATE: your Kraken taker fee as a decimal, e.g. 0.0040 for 0.40%.
+          # Leave unset to use the default in strategy.py.
+          FEE_RATE: ${{ vars.FEE_RATE }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
+          FEE_ARGS=()
+          if [ -n "$FEE_RATE" ]; then
+            FEE_ARGS=(--fee "$FEE_RATE")
+          fi
           if [ "$ACTION" = "check-live" ]; then
-            python kraken_bot.py --check-live
+            python kraken_bot.py --check-live "${FEE_ARGS[@]}"
           elif [ "$LIVE_TRADING" = "true" ]; then
-            python kraken_bot.py --live --i-understand-the-risks
+            # Live state (positions, balances, trades) is committed to this
+            # repo, so never trade live from a public repository.
+            if [ "$(gh api "repos/$REPO" --jq .private)" != "true" ]; then
+              echo "::error::LIVE_TRADING is true but this repository is not private. Make it private first."
+              exit 1
+            fi
+            python kraken_bot.py --live --i-understand-the-risks "${FEE_ARGS[@]}"
           else
-            python kraken_bot.py
+            python kraken_bot.py "${FEE_ARGS[@]}"
           fi
 
       # always(): save state even if the bot step failed part-way. In live mode
