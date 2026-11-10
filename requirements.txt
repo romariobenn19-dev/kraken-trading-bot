@@ -1,0 +1,7 @@
+# Pinned to the versions the bot last ran successfully with (Nov 2026).
+# Upgrade deliberately: after changing ccxt, run the "check-live" workflow
+# action to confirm stop-loss orders are still accepted by Kraken.
+ccxt==4.5.92
+pandas==3.1.1
+numpy==2.5.4
+requests==2.34.2

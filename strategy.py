@@ -1,8 +1,8 @@
 """
 strategy.py - pure strategy logic. No exchange, no network, no files.
 
-Both the live/paper bot (kraken_bot.py) and the backtester (backtest.py) import
-this module, so what you backtest is exactly what the bot trades.
+The live/paper bot (kraken_bot.py) imports this module. Keeping the rules free of
+exchange code means a future backtester can import the exact same logic.
 
 Indicators are implemented in plain pandas (Wilder smoothing for RSI/ATR), so
 there is no pandas_ta dependency.
