@@ -1,0 +1,61 @@
+name: Backtest
+
+# Manual only: Actions tab > Backtest > Run workflow.
+# Results appear on the run's summary page; CSVs are attached as an artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'How many days of history to test'
+        default: '365'
+      symbols:
+        description: 'Coins, comma-separated (e.g. BTC/USD,ETH/USD). Blank = default list of 35'
+        default: ''
+      settings:
+        description: 'Settings to change, space-separated (e.g. fee_rate=0.004 sl_atr=2). Blank = bot defaults'
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+
+      # Downloaded price history is reused between runs.
+      - name: Cache price history
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: backtest-data-${{ github.run_id }}
+          restore-keys: backtest-data-
+
+      - name: Run backtest
+        env:
+          DAYS: ${{ inputs.days }}
+          SYMBOLS: ${{ inputs.symbols }}
+          SETTINGS: ${{ inputs.settings }}
+        run: |
+          ARGS=(--days "$DAYS")
+          if [ -n "$SYMBOLS" ]; then ARGS+=(--symbols "$SYMBOLS"); fi
+          if [ -n "$SETTINGS" ]; then ARGS+=(--set "$SETTINGS"); fi
+          python backtest.py "${ARGS[@]}"
+          cat reports/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backtest-results
+          path: reports/
+          if-no-files-found: ignore

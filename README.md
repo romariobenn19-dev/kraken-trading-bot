@@ -34,6 +34,37 @@ python kraken_bot.py --loop     # paper-trade continuously, once per candle
 python kraken_bot.py --status   # show positions and results
 ```
 
+## Backtesting
+
+`backtest.py` replays historical 1h candles through the same `strategy.py`
+code, with the bot's sizing, fees, exits and risk limits. It also computes
+EMA50/EMA200 over the same 299-candle window the bot uses.
+
+Easiest: Actions tab → **Backtest** → **Run workflow**. Choose how many days,
+optionally which coins and which settings to change (e.g. `fee_rate=0.004`).
+The report appears on the run's page; the trade list and equity curve are
+attached as `backtest-results`.
+
+Locally:
+
+```bash
+python backtest.py --days 730
+```
+
+```bash
+python backtest.py --days 730 --set "fee_rate=0.004 tp_atr=4"
+```
+
+Any number field in `strategy.Config` can be changed with `--set`. Read the
+limitations in the `backtest.py` docstring: it uses Binance USDT price
+history (Kraken only serves ~30 days) and today's coin list.
+
+Run the tests with:
+
+```bash
+python -m unittest discover -s tests
+```
+
 ## Running on GitHub Actions
 
 The workflow runs at 2 minutes past every hour, **but GitHub does not guarantee
