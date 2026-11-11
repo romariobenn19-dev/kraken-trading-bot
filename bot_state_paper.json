@@ -1,27 +1,27 @@
 {
   "version": 1,
-  "paper_cash": 846.5913055012093,
-  "positions": {
-    "PEPE/USD": {
-      "qty": 29704180.36,
-      "entry_price": 5.1235605e-06,
-      "entry_fee": 1.2175293214189742,
-      "sl": 4.872e-06,
-      "tp": 5.627e-06,
-      "atr": 1.0067672146354426e-07,
-      "sl_dist": 2.5169180365886064e-07,
-      "tp_dist": 5.033836073177213e-07,
-      "opened_at": "2026-11-09T09:26:17.256146+00:00",
-      "opened_ms": 1794216377256,
-      "last_checked_ms": 1794355200000,
-      "sl_order_id": null,
-      "unprotected": false
-    }
+  "paper_cash": 995.6469343517798,
+  "positions": {},
+  "cooldowns": {
+    "PEPE/USD": "2026-11-11T15:02:16.649420+00:00"
   },
-  "cooldowns": {},
   "day": {
     "date": "2026-11-11",
     "start_equity": 1006.6374292808893
   },
-  "closed_trades": []
+  "closed_trades": [
+    {
+      "symbol": "PEPE/USD",
+      "opened_at": "2026-11-09T09:26:17.256146+00:00",
+      "closed_at": "2026-11-11T09:02:16.649371+00:00",
+      "qty": 29704180.36,
+      "entry_price": 5.1235605e-06,
+      "exit_price": 5.058469500000001e-06,
+      "entry_fee": 1.217529,
+      "exit_fee": 1.202062,
+      "pnl": -4.353066,
+      "pnl_pct": -2.8376,
+      "reason": "trend"
+    }
+  ]
 }

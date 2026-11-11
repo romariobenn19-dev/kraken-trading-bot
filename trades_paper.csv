@@ -1,0 +1,2 @@
+symbol,opened_at,closed_at,qty,entry_price,exit_price,entry_fee,exit_fee,pnl,pnl_pct,reason
+PEPE/USD,2026-11-09T09:26:17.256146+00:00,2026-11-11T09:02:16.649371+00:00,29704180.36,5.1235605e-06,5.058469500000001e-06,1.217529,1.202062,-4.353066,-2.8376,trend
