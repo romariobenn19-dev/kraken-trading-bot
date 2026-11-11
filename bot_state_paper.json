@@ -13,15 +13,15 @@
       "tp_dist": 5.033836073177213e-07,
       "opened_at": "2026-11-09T09:26:17.256146+00:00",
       "opened_ms": 1794216377256,
-      "last_checked_ms": 1794337200000,
+      "last_checked_ms": 1794355200000,
       "sl_order_id": null,
       "unprotected": false
     }
   },
   "cooldowns": {},
   "day": {
-    "date": "2026-11-10",
-    "start_equity": 999.4490176337692
+    "date": "2026-11-11",
+    "start_equity": 1006.6374292808893
   },
   "closed_trades": []
 }
