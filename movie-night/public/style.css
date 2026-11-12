@@ -98,5 +98,6 @@ input#seek { width: 100%; accent-color: var(--accent); height: 28px; }
 
 @media (max-width: 560px) {
   .reacts { display: none; }
+  .chrome .top .peers { flex-basis: 100%; }
   .time { font-size: 12px; }
 }
