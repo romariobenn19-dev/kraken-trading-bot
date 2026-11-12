@@ -1,0 +1,18 @@
+{
+  "name": "movie-night",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Synced long-distance movie nights: the host laptop does the heavy lifting, the partner's tablet just plays.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "prepare-movie": "node prepare.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "hls.js": "^1.5.20",
+    "ws": "^8.18.0"
+  }
+}

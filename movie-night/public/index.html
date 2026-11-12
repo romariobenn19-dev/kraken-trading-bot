@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d0b14">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Movie Night</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- Join -->
+  <section id="join" class="screen">
+    <div class="join-card">
+      <div class="logo">🎬</div>
+      <h1>Movie Night</h1>
+      <p class="muted">Together, wherever you are.</p>
+      <label for="name">Your name</label>
+      <input id="name" maxlength="30" autocomplete="nickname" placeholder="e.g. Maria">
+      <button id="joinBtn" class="primary">Join</button>
+    </div>
+  </section>
+
+  <!-- Library -->
+  <section id="library" class="screen hidden">
+    <header class="bar">
+      <h2>🎬 Movie Night</h2>
+      <div id="peersLib" class="peers"></div>
+    </header>
+    <p class="muted pad">Pick a movie. It opens on both screens.</p>
+    <div id="movies" class="grid"></div>
+    <p id="noMovies" class="muted pad hidden">No movies yet. On the laptop, drag a movie file onto <b>prepare-movie.bat</b>.</p>
+  </section>
+
+  <!-- Player -->
+  <section id="player" class="screen hidden">
+    <div id="stage">
+      <video id="video" playsinline preload="auto"></video>
+
+      <div id="hold" class="hold hidden">
+        <div class="spinner"></div>
+        <div id="holdText">Getting ready…</div>
+        <div id="holdBars" class="hold-bars"></div>
+      </div>
+
+      <button id="tapToPlay" class="tap hidden">▶ Tap to continue</button>
+      <div id="floaters"></div>
+      <div id="netBanner" class="banner hidden">Reconnecting…</div>
+
+      <div id="chrome" class="chrome">
+        <div class="top">
+          <button id="backBtn" class="ghost" title="Back to movies">‹ Movies</button>
+          <div id="title" class="title"></div>
+          <div id="peersPlayer" class="peers"></div>
+        </div>
+        <div class="bottom">
+          <input id="seek" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek">
+          <div class="row">
+            <button id="back10" class="icon" title="Back 10s">⟲10</button>
+            <button id="playBtn" class="icon big" title="Play / pause">▶</button>
+            <button id="fwd10" class="icon" title="Forward 10s">10⟳</button>
+            <span id="time" class="time">0:00 / 0:00</span>
+            <span class="spacer"></span>
+            <span class="reacts">
+              <button class="react" data-e="❤️">❤️</button>
+              <button class="react" data-e="😂">😂</button>
+              <button class="react" data-e="😮">😮</button>
+              <button class="react" data-e="😭">😭</button>
+            </span>
+            <button id="subsBtn" class="icon hidden" title="Subtitles">CC</button>
+            <select id="quality" title="Quality"></select>
+            <button id="fsBtn" class="icon" title="Full screen">⛶</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <script src="/vendor/hls.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
