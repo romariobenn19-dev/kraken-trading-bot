@@ -3,7 +3,8 @@
 Watch movies together from different places. Your laptop does all the heavy work; her tablet just plays.
 
 - **Your laptop converts each movie ahead of time** into several qualities, up to 4K, using its graphics card.
-- **Her tablet picks the sharpest version its screen and connection can handle.** On a Galaxy Tab A8 (1920×1200 screen) that's full 1080p, the most that screen can display.
+- **Her tablet picks the sharpest version its screen and connection can handle.** On a Galaxy Tab A8 (1920×1200 screen) that's full 1080p, the most that screen can display, using an extra-sharp 1080p HQ version sized for her ~7.75 Mbps.
+- **She does nothing.** After the first visit she just opens the link, with no name screen and no settings. Picking quality, buffering and syncing all happen automatically.
 - **Up to two minutes buffered ahead**, so short Wi-Fi dips never show on screen.
 - **If her connection really drops, both screens pause together**, then resume together once she has a bigger buffer. Nobody falls behind.
 - **Picture comes back sharp quickly.** After a dip, blurry buffered video is swapped for the sharp version as soon as her Wi-Fi recovers.
@@ -18,11 +19,12 @@ Her speed test in bed showed **7.75 Mbps**. Here's what each quality needs, on a
 |---|---|---|
 | 2160p (4K) | ~9 Mbps | – |
 | 1440p | ~5 Mbps | – |
-| **1080p** | **~3.2 Mbps** | ~5 Mbps |
+| **1080p HQ** | **~4.5 Mbps** | – |
+| 1080p | ~3.2 Mbps | ~5 Mbps |
 | 720p | ~1.6 Mbps | ~2.5 Mbps |
 | 480p | ~0.8 Mbps | ~1.1 Mbps |
 
-At 7.75 Mbps she can watch sharp 1080p with plenty of headroom. On a 4K device with 10+ Mbps, the 4K versions get used automatically.
+At 7.75 Mbps she gets **1080p HQ** most of the time, stepping down to regular 1080p (still sharp) when her Wi-Fi is busy. On a 4K device with 10+ Mbps, the 4K versions get used automatically.
 
 **Your upload speed matters too**: you're sending her the stream. You need about **6+ Mbps upload** for her 1080p. Run a speed test on your laptop to check.
 
@@ -58,6 +60,7 @@ At 7.75 Mbps she can watch sharp 1080p with plenty of headroom. On a 4K device w
 
 **Drag a movie file onto `prepare-movie.bat`.** That's it.
 
+- **Grainy film?** (older films, or dark, noisy scenes) Run `node prepare.js "Film.mkv" --denoise`. Your laptop cleans the grain first, so the bitrate goes into real detail and her picture looks sharper.
 - To get subtitles, put a matching `.srt` next to the movie, for example `Film.mkv` and `Film.srt`. It's picked up automatically.
 - With the laptop's GPU, a 2-hour 4K film takes very roughly **30–60 minutes**. A 1080p film takes less.
 - If you stop it partway, run it again. It skips the qualities it already finished.

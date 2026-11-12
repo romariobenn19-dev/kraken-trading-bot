@@ -39,7 +39,8 @@ const expectedPos = () => (!state ? 0 : state.paused ? state.pos : state.pos + (
 $('name').value = store.get('mn_name') || '';
 $('joinBtn').onclick = join;
 $('name').addEventListener('keydown', (e) => { if (e.key === 'Enter') join(); });
-if (store.get('mn_name') && role === 'host') join();
+// After the first visit, skip the name screen entirely - just open the link and you're in.
+if (store.get('mn_name')) join();
 
 function join() {
   const name = $('name').value.trim() || (role === 'host' ? 'Host' : 'Guest');
@@ -255,7 +256,7 @@ async function setupQuality() {
   sel.appendChild(auto);
   for (const q of qualityLevels) sel.appendChild(new Option(q.label, String(q.index)));
   const saved = store.get('mn_quality');
-  const savedLevel = qualityLevels.find((q) => q.label.split(' ')[0] === saved);
+  const savedLevel = qualityLevels.find((q) => q.label.split(' · ')[0] === saved);
   sel.value = savedLevel ? String(savedLevel.index) : '-1';
   if (savedLevel) hls.loadLevel = savedLevel.index;
   updateQualityLabel();
@@ -264,7 +265,8 @@ async function setupQuality() {
 function labelFor(lv) {
   const name = lv.height >= 2000 || lv.width >= 3800 ? '2160p' : lv.width >= 2500 ? '1440p' : lv.width >= 1900 ? '1080p'
     : lv.width >= 1260 ? '720p' : lv.width >= 840 ? '480p' : '360p';
-  return `${name} · ${(lv.bitrate / 1e6).toFixed(1)} Mbps`;
+  const hq = name === '1080p' && String(lv.uri || [].concat(lv.url || [])[0] || '').includes('-hq_') ? ' HQ' : '';
+  return `${name}${hq} · ${((lv.averageBitrate || lv.bitrate) / 1e6).toFixed(1)} Mbps`;
 }
 
 function updateQualityLabel() {
@@ -272,7 +274,7 @@ function updateQualityLabel() {
   const autoOpt = sel.querySelector('option[value="-1"]');
   if (!autoOpt || !hls) return;
   const cur = hls.levels[hls.currentLevel];
-  autoOpt.textContent = cur ? `Auto (${labelFor(cur).split(' ')[0]})` : 'Auto';
+  autoOpt.textContent = cur ? `Auto (${labelFor(cur).split(' · ')[0]})` : 'Auto';
 }
 
 $('quality').onchange = (e) => {
@@ -281,7 +283,7 @@ $('quality').onchange = (e) => {
   // loadLevel switches from the next chunk on, keeping what's already buffered.
   hls.loadLevel = i;
   const q = qualityLevels.find((x) => x.index === i);
-  store.set('mn_quality', q ? q.label.split(' ')[0] : 'auto');
+  store.set('mn_quality', q ? q.label.split(' · ')[0] : 'auto');
   updateQualityLabel();
 };
 
@@ -351,7 +353,7 @@ function reportStatus() {
   send({
     t: 'status', movieId: meta.id, ct: video.currentTime, buffer: ahead,
     full: dur > 0 && video.currentTime + ahead >= dur - 1,
-    stalled, quality: lv ? labelFor(lv).split(' ')[0] : '', bw: hls ? Math.round(hls.bandwidthEstimate || 0) : 0,
+    stalled, quality: lv ? labelFor(lv).split(' · ')[0] : '', bw: hls ? Math.round(hls.bandwidthEstimate || 0) : 0,
   });
 }
 setInterval(reportStatus, 1000);

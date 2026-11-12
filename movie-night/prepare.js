@@ -20,6 +20,8 @@
  *   --max 2160            Highest quality to produce (2160, 1440, 1080, 720 ...)
  *   --no-avc              Skip the H.264 compatibility versions (faster)
  *   --no-hevc             Skip the HEVC versions (H.264 only)
+ *   --denoise             Gently clean film grain/noise first. Grain wastes bitrate, so
+ *                         grainy films come out noticeably sharper at the same size.
  *
  * It's safe to stop and re-run: finished qualities are skipped.
  */
@@ -39,6 +41,8 @@ const SEGMENT_SECONDS = 4;
 const HEVC_LADDER = [
   { label: '2160p', width: 3840, kbps: 9000, codec: 'hvc1.1.6.L153.90' },
   { label: '1440p', width: 2560, kbps: 5000, codec: 'hvc1.1.6.L150.90' },
+  // Extra-sharp 1080p for 1080p screens on ~6-8 Mbps connections (e.g. a Galaxy Tab A8).
+  { label: '1080p', tag: 'hq', width: 1920, kbps: 4500, codec: 'hvc1.1.6.L123.90' },
   { label: '1080p', width: 1920, kbps: 3200, codec: 'hvc1.1.6.L123.90' },
   { label: '720p',  width: 1280, kbps: 1600, codec: 'hvc1.1.6.L93.90' },
   { label: '480p',  width: 854,  kbps: 800,  codec: 'hvc1.1.6.L90.90' },
@@ -70,6 +74,7 @@ function parseArgs(argv) {
     else if (a === '--max') opts.max = parseInt(next(), 10);
     else if (a === '--no-avc') opts.avc = false;
     else if (a === '--no-hevc') opts.hevc = false;
+    else if (a === '--denoise') opts.denoise = true;
     else if (a === '-h' || a === '--help') { printHelp(); process.exit(0); }
     else if (a.startsWith('--')) die(`Unknown option ${a}`);
     else rest.push(a);
@@ -161,7 +166,7 @@ function videoCodecArgs(encName, codecFamily, kbps, gop) {
   const tag = hevc ? ['-tag:v', 'hvc1'] : [];
   switch (encName) {
     case 'nvenc':
-      return ['-c:v', hevc ? 'hevc_nvenc' : 'h264_nvenc', '-preset', 'p6', '-tune', 'hq', '-rc', 'vbr',
+      return ['-c:v', hevc ? 'hevc_nvenc' : 'h264_nvenc', '-preset', 'p7', '-tune', 'hq', '-rc', 'vbr',
         '-multipass', 'fullres', '-spatial-aq', '1', '-rc-lookahead', '32', '-forced-idr', '1',
         '-profile:v', hevc ? 'main' : 'high', '-g', String(gop), ...rate, ...tag];
     case 'amf':
@@ -306,16 +311,17 @@ async function main() {
 
   const done = { hevc: [], avc: [] };
   for (const job of jobs) {
-    const dirName = `${job.label}_${job.family}`;
+    const dirName = `${job.label}${job.tag ? `-${job.tag}` : ''}_${job.family}`;
     const dir = path.join(outDir, dirName);
     const height = even((job.width * srcH) / srcW);
     const width = even(job.width);
     if (fs.existsSync(path.join(dir, '.done'))) {
-      console.log(`  ${(job.label + ' ' + job.family.toUpperCase()).padEnd(14)} already done, skipping`);
+      console.log(`  ${(job.label + (job.tag ? ' HQ' : '') + ' ' + job.family.toUpperCase()).padEnd(14)} already done, skipping`);
     } else {
       fs.rmSync(dir, { recursive: true, force: true });
       fs.mkdirSync(dir, { recursive: true });
-      const vf = `scale=${width}:${height}:flags=lanczos${toneMap},format=yuv420p,setsar=1`;
+      const denoise = opts.denoise ? 'hqdn3d=1.5:1.5:6:6,' : '';
+      const vf = `${denoise}scale=${width}:${height}:flags=lanczos${toneMap},format=yuv420p,setsar=1`;
       const args = [
         '-i', opts.input,
         '-map', `0:${video.index}`,
@@ -331,7 +337,7 @@ async function main() {
         '-hls_segment_filename', path.join(dir, 'seg_%05d.m4s'),
         path.join(dir, 'index.m3u8'),
       ];
-      await runFfmpeg(args, duration, `${job.label} ${job.family.toUpperCase()}`);
+      await runFfmpeg(args, duration, `${job.label}${job.tag ? ' HQ' : ''} ${job.family.toUpperCase()}`);
       fs.writeFileSync(path.join(dir, '.done'), new Date().toISOString());
     }
     const m = measureRendition(dir);
@@ -392,7 +398,8 @@ async function main() {
   const totalGb = [...done.hevc, ...done.avc].reduce((s, r) => s + r.bytes, 0) / 1e9;
   console.log(`\nDone! "${title}" is ready in Movie Night (${totalGb.toFixed(1)} GB on disk).`);
   for (const r of [...done.hevc, ...done.avc]) {
-    console.log(`  ${r.label.padEnd(6)} ${r.dir.endsWith('hevc') ? 'HEVC ' : 'H.264'}  avg ${(r.avg / 1e6).toFixed(1)} Mbps`);
+    const name = r.label + (r.dir.includes('-hq_') ? ' HQ' : '');
+    console.log(`  ${name.padEnd(8)} ${r.dir.endsWith('hevc') ? 'HEVC ' : 'H.264'}  avg ${(r.avg / 1e6).toFixed(1)} Mbps`);
   }
 }
 
