@@ -2,6 +2,10 @@
 $ErrorActionPreference = 'Stop'
 $dir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
+# 0. Files from a downloaded ZIP are flagged 'from the internet'; clear that so the
+#    launcher doesn't show a security warning every time it starts.
+Get-ChildItem -Path $dir -Recurse -File | Unblock-File -ErrorAction SilentlyContinue
+
 # 1. Let Tailscale devices (her tablet) reach Movie Night. Nothing else gets in.
 if (-not (Get-NetFirewallRule -DisplayName 'Movie Night' -ErrorAction SilentlyContinue)) {
   New-NetFirewallRule -DisplayName 'Movie Night' -Direction Inbound -Protocol TCP -LocalPort 8080 `
