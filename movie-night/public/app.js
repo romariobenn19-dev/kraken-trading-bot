@@ -87,7 +87,7 @@ function connect() {
     else if (m.t === 'welcome') onWelcome(m);
     else if (m.t === 'replaced') onReplaced();
     else if (m.t === 'jobs') renderJobs(m.jobs);
-    else if (m.t === 'library') refreshMovies();
+    else if (m.t === 'library') refreshMovies().then(syncOpenMovieSubs);
     else if (m.t === 'personal') loadPersonal();
     else if (m.t === 'restarting') { toast('Updating Movie Night… back in a few seconds'); appVersion = 'restarting'; }
   };
@@ -140,6 +140,13 @@ async function refreshMovies() {
       del.textContent = '🗑';
       del.onclick = (e) => { e.stopPropagation(); deleteMovie(mv); };
       b.appendChild(del);
+      const cc = document.createElement('span');
+      cc.className = 'subs-btn';
+      cc.setAttribute('role', 'button');
+      cc.title = 'Subtitles for this movie';
+      cc.textContent = subsOf(mv).length ? `CC ${subsOf(mv).length}` : 'CC+';
+      cc.onclick = (e) => { e.stopPropagation(); openSubsDialog(mv); };
+      b.appendChild(cc);
     }
     grid.appendChild(b);
   }
@@ -185,16 +192,7 @@ async function openMovie(id) {
   $('title').textContent = mv.title;
   showScreen('player');
   for (const t of [...video.querySelectorAll('track')]) t.remove();
-  if (mv.subtitles) {
-    const tr = document.createElement('track');
-    tr.kind = 'subtitles'; tr.label = 'Subtitles'; tr.srclang = 'en';
-    tr.src = `/library/${encodeURIComponent(mv.id)}/${mv.subtitles}`;
-    video.appendChild(tr);
-    $('subsBtn').classList.remove('hidden');
-    setSubs(store.get('mn_subs') !== 'off');
-  } else {
-    $('subsBtn').classList.add('hidden');
-  }
+  buildSubtitleTracks(mv);
 
   const base = `/library/${encodeURIComponent(mv.id)}/`;
   setPlayerError(null);
@@ -499,13 +497,7 @@ function updatePlayButton() {
   $('playBtn').setAttribute('aria-label', playing ? 'Pause' : 'Play');
 }
 
-$('subsBtn').onclick = () => setSubs(!$('subsBtn').classList.contains('on'));
-function setSubs(on) {
-  const t = video.textTracks[0];
-  if (t) t.mode = on ? 'showing' : 'hidden';
-  $('subsBtn').classList.toggle('on', on);
-  store.set('mn_subs', on ? 'on' : 'off');
-}
+$('subsBtn').onclick = (e) => { e.stopPropagation(); toggleSubsMenu(); };
 
 document.addEventListener('fullscreenchange', () => {
   $('fsBtn').innerHTML = document.fullscreenElement ? ICONS.exitFs : ICONS.fs;
@@ -741,14 +733,17 @@ function renderJobs(jobs) {
 }
 
 // File picker
-$('addMovieBtn').onclick = () => openPicker();
+$('addMovieBtn').onclick = () => openPicker('movie');
 $('pickerClose').onclick = closePicker;
 $('picker').addEventListener('click', (e) => { if (e.target === $('picker')) closePicker(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('picker').classList.contains('hidden')) closePicker(); });
 $('upBtn').onclick = () => { if (currentDir && currentDir.parent) browseTo(currentDir.parent); else browseTo(null); };
 $('backToBrowse').onclick = () => { $('confirmView').classList.add('hidden'); $('browseView').classList.remove('hidden'); };
 
-function openPicker() {
+let pickerMode = { kind: 'movie' };
+function openPicker(kind = 'movie', onPick = null) {
+  pickerMode = { kind, onPick };
+  $('picker').querySelector('.sheet-head b').textContent = kind === 'subs' ? 'Choose a subtitle file' : 'Add a movie';
   $('picker').classList.remove('hidden');
   $('confirmView').classList.add('hidden');
   $('browseView').classList.remove('hidden');
@@ -758,7 +753,7 @@ function closePicker() { $('picker').classList.add('hidden'); }
 
 async function browseTo(dir) {
   let data;
-  try { data = await api(`/api/host/browse${dir ? `?dir=${encodeURIComponent(dir)}` : ''}`); }
+  try { data = await api(`/api/host/browse?kind=${pickerMode.kind}${dir ? `&dir=${encodeURIComponent(dir)}` : ''}`); }
   catch (e) { toast(e.message); return; }
   if (data.error && dir) { toast(data.error); if (dir !== null) return browseTo(null); }
   currentDir = data;
@@ -795,7 +790,9 @@ async function browseTo(dir) {
 }
 
 function pickFile(e) {
+  if (pickerMode.kind === 'subs') { closePicker(); if (pickerMode.onPick) pickerMode.onPick(e); return; }
   pickedFile = e;
+  loadSubChoices({ file: e.path });
   $('browseView').classList.add('hidden');
   $('confirmView').classList.remove('hidden');
   $('confirmFile').textContent = `${e.name} · ${fmtSize(e.size)}`;
@@ -819,6 +816,7 @@ $('startPrep').onclick = async () => {
     await api('/api/host/prepare', {
       file: pickedFile.path, title: $('titleInput').value.trim(),
       denoise: $('optDenoise').checked, skipAvc: $('optSkipAvc').checked, quick: $('optQuick').checked,
+      subtitles: $('subsChoices')._items ? chosenSubs($('subsChoices')) : null,
     });
     closePicker();
     toast('Preparing in the background. You can keep using your laptop.');
@@ -1032,3 +1030,210 @@ function renderHttpsNote() {
     if (hostInfo.https.status === 'ok') toast('Her link is secure now. Copy it and send her the new one!', 7000);
   };
 }
+
+// ---- Subtitles ------------------------------------------------------------------
+/** meta.subtitles used to be one file name; now it's a list. */
+function subsOf(mv) {
+  if (!mv || !mv.subtitles) return [];
+  if (typeof mv.subtitles === 'string') return [{ file: mv.subtitles, label: 'Subtitles', lang: 'en' }];
+  return mv.subtitles;
+}
+const subKey = (s) => `${s.lang}|${s.label}`;
+const appliedOffset = new WeakMap();
+let subOffset = 0;
+
+function buildSubtitleTracks(mv) {
+  for (const t of [...video.querySelectorAll('track')]) t.remove();
+  const subs = subsOf(mv);
+  $('subsBtn').classList.toggle('hidden', !subs.length);
+  $('subsMenu').classList.add('hidden');
+  subOffset = Number(store.get(`mn_suboff_${mv.id}`)) || 0;
+  for (const sub of subs) {
+    const tr = document.createElement('track');
+    tr.kind = 'subtitles';
+    tr.label = sub.label;
+    tr.srclang = sub.lang && sub.lang !== 'und' ? sub.lang : 'en';
+    tr.src = `/library/${encodeURIComponent(mv.id)}/${sub.file}`;
+    tr.dataset.key = subKey(sub);
+    tr.addEventListener('load', applySubOffset);
+    video.appendChild(tr);
+  }
+  applySubSize();
+  selectSub(preferredSub(subs));
+}
+
+/** This device's choice: the same language/label as last time, else English, else the first. */
+function preferredSub(subs) {
+  const saved = store.get('mn_subChoice');
+  if (saved === 'off' || (!saved && store.get('mn_subs') === 'off')) return 'off';
+  if (!subs.length) return 'off';
+  const exact = subs.find((x) => subKey(x) === saved);
+  const sameLang = saved && subs.find((x) => x.lang === saved.split('|')[0]);
+  return subKey(exact || sameLang || subs.find((x) => x.lang === 'en') || subs[0]);
+}
+
+function selectSub(key) {
+  [...video.querySelectorAll('track')].forEach((el, i) => {
+    const t = video.textTracks[i];
+    if (t) t.mode = el.dataset.key === key ? 'showing' : 'disabled';
+  });
+  $('subsBtn').classList.toggle('on', key !== 'off');
+  setTimeout(applySubOffset, 300);
+}
+
+/** Shift every subtitle line by the timing nudge (positive = later). */
+function applySubOffset() {
+  for (const t of video.textTracks) {
+    if (!t.cues || !t.cues.length) continue;
+    const delta = subOffset - (appliedOffset.get(t) || 0);
+    if (!delta) continue;
+    for (const c of [...t.cues]) {
+      c.startTime = Math.max(0, c.startTime + delta);
+      c.endTime = Math.max(c.startTime + 0.1, c.endTime + delta);
+    }
+    appliedOffset.set(t, subOffset);
+  }
+}
+
+function applySubSize() {
+  const size = store.get('mn_subSize') || 'm';
+  $('stage').classList.remove('subs-s', 'subs-m', 'subs-l');
+  $('stage').classList.add(`subs-${size}`);
+}
+
+function toggleSubsMenu(force) {
+  const menu = $('subsMenu');
+  const open = force !== undefined ? force : menu.classList.contains('hidden');
+  if (!open) { menu.classList.add('hidden'); return; }
+  renderSubsMenu();
+  menu.classList.remove('hidden');
+  showChrome();
+}
+
+function renderSubsMenu() {
+  const menu = $('subsMenu');
+  const subs = subsOf(meta);
+  const current = [...video.querySelectorAll('track')].find((el, i) => video.textTracks[i] && video.textTracks[i].mode === 'showing');
+  const currentKey = current ? current.dataset.key : 'off';
+  const size = store.get('mn_subSize') || 'm';
+  const off = subOffset === 0 ? 'On time' : `${subOffset > 0 ? '+' : '−'}${Math.abs(subOffset).toFixed(1)}s ${subOffset > 0 ? 'later' : 'earlier'}`;
+  menu.innerHTML = `
+    <h4>Subtitles</h4>
+    <div>
+      <button class="opt ${currentKey === 'off' ? 'on' : ''}" data-key="off">Off</button>
+      ${subs.map((x) => `<button class="opt ${subKey(x) === currentKey ? 'on' : ''}" data-key="${escapeHtml(subKey(x))}">${escapeHtml(x.label)}</button>`).join('')}
+    </div>
+    <h4>Text size</h4>
+    <div class="seg">${[['s', 'Small'], ['m', 'Medium'], ['l', 'Large']].map(([k, l]) => `<button data-size="${k}" class="${size === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <h4>Timing</h4>
+    <div class="timing"><button data-nudge="-0.5" aria-label="Show subtitles earlier">−½s</button><span>${off}</span><button data-nudge="0.5" aria-label="Show subtitles later">+½s</button>
+      ${subOffset ? '<button data-nudge="reset">Reset</button>' : ''}</div>
+    <p class="hint">Words appearing too early? Use +½s. Too late? Use −½s. Only changes your screen.</p>`;
+  for (const b of menu.querySelectorAll('[data-key]')) b.onclick = () => {
+    store.set('mn_subChoice', b.dataset.key);
+    selectSub(b.dataset.key);
+    renderSubsMenu();
+  };
+  for (const b of menu.querySelectorAll('[data-size]')) b.onclick = () => { store.set('mn_subSize', b.dataset.size); applySubSize(); renderSubsMenu(); };
+  for (const b of menu.querySelectorAll('[data-nudge]')) b.onclick = () => {
+    subOffset = b.dataset.nudge === 'reset' ? 0 : Math.round((subOffset + Number(b.dataset.nudge)) * 10) / 10;
+    store.set(`mn_suboff_${meta.id}`, String(subOffset));
+    applySubOffset();
+    renderSubsMenu();
+  };
+}
+document.addEventListener('pointerdown', (e) => {
+  if (!$('subsMenu').classList.contains('hidden') && !e.target.closest('#subsMenu') && !e.target.closest('#subsBtn')) toggleSubsMenu(false);
+});
+
+/** Subtitles were added on the laptop while a movie is open: show them without interrupting playback. */
+function syncOpenMovieSubs() {
+  if (!meta) return;
+  const fresh = movies.find((m) => m.id === meta.id);
+  if (!fresh || JSON.stringify(subsOf(fresh)) === JSON.stringify(subsOf(meta))) return;
+  const had = subsOf(meta).length;
+  meta = fresh;
+  buildSubtitleTracks(meta);
+  if (subsOf(meta).length > had) toast('New subtitles added. Tap CC to choose them.');
+}
+
+// Subtitle choices (Add movie dialog and Subtitles dialog)
+function renderSubChoices(container, items, checked) {
+  container._items = items;
+  if (!items.length) { container.innerHTML = '<p class="muted small">No subtitles found inside this file or next to it. You can add a subtitle file later from the movie\'s CC+ button.</p>'; return; }
+  container.innerHTML = items.map((it, i) => {
+    const already = (container._existing || []).includes(it.label);
+    const usable = (it.type === 'file' || it.textBased) && !already;
+    const where = it.type === 'file' ? `file: ${it.name}` : `built in${it.forced ? ' · forced' : ''}${it.codec ? ` · ${it.codec}` : ''}`;
+    return `<label class="check ${usable ? '' : 'disabled'}"><input type="checkbox" data-i="${i}" ${checked.has(i) && usable ? 'checked' : ''} ${usable ? '' : 'disabled'}>
+      <span>${escapeHtml(it.label)} <span class="note">· ${escapeHtml(where)}${already ? ' · already added' : usable ? '' : ' · picture-based, can\'t be used'}</span></span></label>`;
+  }).join('');
+}
+function chosenSubs(container) {
+  return (container._items || []).filter((it, i) => { const cb = container.querySelector(`input[data-i="${i}"]`); return cb && cb.checked; })
+    .map((it) => (it.type === 'track' ? { type: 'track', stream: it.stream, label: it.label, lang: it.lang } : { type: 'file', path: it.path, label: it.label, lang: it.lang }));
+}
+const sameSource = (a, b) => a.type === b.type && (a.type === 'track' ? a.stream === b.stream : a.path === b.path);
+
+async function loadSubChoices({ file, id }) {
+  const box = id ? $('subsAvailable') : $('subsChoices');
+  box._items = null;
+  box._existing = id && subsDialogMovie ? subsOf(subsDialogMovie).map((x) => x.label) : [];
+  box.innerHTML = '<p class="muted small">Looking for subtitles…</p>';
+  try {
+    const src = await api(`/api/host/subsources?${id ? `id=${encodeURIComponent(id)}` : `file=${encodeURIComponent(file)}`}`);
+    const items = [...src.files, ...src.tracks];
+    const checked = new Set(id ? [] : items.map((it, i) => (src.defaults.some((d) => sameSource(d, it)) ? i : -1)).filter((i) => i >= 0));
+    renderSubChoices(box, items, checked);
+    if (id && src.sourceMissing) box.insertAdjacentHTML('afterbegin', '<p class="muted small">The original movie file has moved, so only subtitle files can be added.</p>');
+  } catch (e) { box.innerHTML = `<p class="muted small">${escapeHtml(e.message)}</p>`; box._items = null; }
+}
+
+// Subtitles dialog for a movie already in the library
+let subsDialogMovie = null;
+function openSubsDialog(mv) {
+  subsDialogMovie = mv;
+  $('subsDialogTitle').textContent = `Subtitles · ${mv.title}`;
+  renderCurrentSubs();
+  $('subsDialog').classList.remove('hidden');
+  loadSubChoices({ id: mv.id });
+}
+function renderCurrentSubs() {
+  const subs = subsOf(subsDialogMovie);
+  $('subsCurrent').innerHTML = subs.length
+    ? subs.map((x) => `<span class="chip">${escapeHtml(x.label)}<button data-file="${escapeHtml(x.file)}" aria-label="Remove ${escapeHtml(x.label)}">✕</button></span>`).join('')
+    : '<span class="muted small">None yet.</span>';
+  for (const b of $('subsCurrent').querySelectorAll('button')) b.onclick = async () => {
+    if (!confirm('Remove these subtitles?')) return;
+    try {
+      await api('/api/host/remove-subs', { id: subsDialogMovie.id, file: b.dataset.file });
+      subsDialogMovie = { ...subsDialogMovie, subtitles: subsOf(subsDialogMovie).filter((x) => x.file !== b.dataset.file) };
+      renderCurrentSubs();
+      loadSubChoices({ id: subsDialogMovie.id });
+    } catch (e) { toast(e.message); }
+  };
+}
+$('subsDialogClose').onclick = () => $('subsDialog').classList.add('hidden');
+$('subsDialog').addEventListener('click', (e) => { if (e.target === $('subsDialog')) $('subsDialog').classList.add('hidden'); });
+$('subsBrowse').onclick = () => {
+  const box = $('subsAvailable');
+  openPicker('subs', (f) => {
+    const items = box._items || [];
+    const checked = new Set(items.map((it, i) => { const cb = box.querySelector(`input[data-i="${i}"]`); return cb && cb.checked ? i : -1; }).filter((i) => i >= 0));
+    const lang = (f.name.match(/\.([a-z]{2,3})\.[a-z]+$/i) || [])[1] || '';
+    items.unshift({ type: 'file', path: f.path, name: f.name, lang: lang.toLowerCase(), label: ({ en: 'English', eng: 'English', el: 'Greek', gre: 'Greek' })[lang.toLowerCase()] || 'Subtitles' });
+    renderSubChoices(box, items, new Set([0, ...[...checked].map((i) => i + 1)]));
+  });
+};
+$('subsAdd').onclick = async () => {
+  const items = chosenSubs($('subsAvailable'));
+  if (!items.length) { toast('Tick at least one subtitle, or choose a subtitle file.'); return; }
+  $('subsAdd').disabled = true;
+  $('subsAdd').textContent = 'Adding…';
+  try {
+    const r = await api('/api/host/add-subs', { id: subsDialogMovie.id, items });
+    toast(`Added: ${r.added.map((x) => x.label).join(', ')}`);
+    $('subsDialog').classList.add('hidden');
+  } catch (e) { toast(e.message, 7000); }
+  finally { $('subsAdd').disabled = false; $('subsAdd').textContent = 'Add subtitles'; }
+};

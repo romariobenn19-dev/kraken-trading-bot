@@ -1,6 +1,6 @@
 {
   "name": "movie-night",
-  "version": "1.5.2",
+  "version": "1.6.0",
   "private": true,
   "description": "Synced long-distance movie nights: the host laptop does the heavy lifting, the partner's tablet just plays.",
   "main": "server.js",
@@ -25,6 +25,7 @@
       "server.js",
       "host.js",
       "prepare.js",
+      "subtitles.js",
       "package.json",
       "README.md",
       "setup.bat",

@@ -187,7 +187,8 @@ const server = http.createServer((req, res) => {
   }
   if (pathname.startsWith('/library/')) {
     const file = within(LIBRARY, pathname.slice('/library/'.length));
-    if (!file) { res.writeHead(403); res.end(); return; }
+    // Private files (e.g. .source.json with the laptop's file path) are never served.
+    if (!file || path.basename(file).startsWith('.')) { res.writeHead(403); res.end(); return; }
     const ext = path.extname(file);
     const cache = ext === '.m4s' || ext === '.mp4' ? 'private, max-age=86400' : 'no-cache';
     sendFile(req, res, file, cache);

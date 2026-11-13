@@ -93,6 +93,7 @@
           <div id="peersPlayer" class="peers"></div>
         </div>
         <div class="bottom">
+          <div id="subsMenu" class="subs-menu hidden" role="dialog" aria-label="Subtitle settings"></div>
           <input id="seek" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek">
           <div class="row">
             <button id="back10" class="icon" title="Back 10s">⟲10</button>
@@ -129,6 +130,8 @@
         <div class="muted small" id="confirmFile"></div>
         <label for="titleInput">Title</label>
         <input id="titleInput" maxlength="120">
+        <div class="field-title">Subtitles</div>
+        <div id="subsChoices" class="subs-choices"><p class="muted small">Looking for subtitles…</p></div>
         <label class="check"><input type="checkbox" id="optQuick" checked> <span>Quick <span class="muted">(only the versions her tablet uses. Untick to also make 4K / 1440p)</span></span></label>
         <label class="check"><input type="checkbox" id="optDenoise"> <span>Clean up film grain <span class="muted">(sharper for older or grainy films)</span></span></label>
         <label class="check"><input type="checkbox" id="optSkipAvc"> <span>Skip H.264 backups <span class="muted">(about a third faster)</span></span></label>
@@ -137,6 +140,27 @@
           <button id="backToBrowse" class="ghost">‹ Back</button>
           <span class="spacer"></span>
           <button id="startPrep" class="primary">Prepare movie</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Subtitles for a movie that's already in the library (host only) -->
+  <div id="subsDialog" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="subsDialogTitle">
+    <div class="sheet">
+      <header class="sheet-head">
+        <b id="subsDialogTitle">Subtitles</b>
+        <button id="subsDialogClose" class="ghost small" aria-label="Close">✕</button>
+      </header>
+      <div class="confirm">
+        <div class="field-title">Already added</div>
+        <div id="subsCurrent" class="subs-current"></div>
+        <div class="field-title">Add more</div>
+        <div id="subsAvailable" class="subs-choices"></div>
+        <div class="row">
+          <button id="subsBrowse" class="ghost">📄 Choose a subtitle file…</button>
+          <span class="spacer"></span>
+          <button id="subsAdd" class="primary">Add subtitles</button>
         </div>
       </div>
     </div>

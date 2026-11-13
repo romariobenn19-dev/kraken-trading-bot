@@ -69,6 +69,12 @@ Good to know:
 - Disk space: about 3–5 GB per 1080p film, more for 4K. Delete movies with the 🗑 on their card. Your original file is never touched.
 - Only movie files you have work. Netflix and other paid services lock their video so it can't be converted.
 
+## Subtitles
+
+- **While watching:** tap **CC** to pick a language or turn them off, change the **text size**, or nudge the **timing** by ½ second if the words are early or late. Each of you sets this on your own device, and it's remembered (timing per movie).
+- **Add subtitles to a movie you already have:** on the laptop, click **CC+** (or **CC 2**…) on its card. Pick a track from the original file, or **Choose a subtitle file…**. It takes seconds, and they show up even mid-movie.
+- Old `.srt` files in non-UTF-8 encodings (common for Greek and accented languages) are converted correctly.
+
 ## Updating
 
 Click **Check for updates** in the app. If there's a new version, it installs it and restarts by itself.

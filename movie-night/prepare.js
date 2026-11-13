@@ -15,6 +15,7 @@
  *   --subs file.srt       Add a subtitle file (.srt / .vtt / .ass). A "Film.srt" next to
  *                         "Film.mkv" is picked up automatically.
  *   --sub-track N         Use embedded subtitle track N (0 = first) instead
+ *   --subtitles JSON      Exact subtitle choices (used by the app)
  *   --audio-track N       Which audio track to use (0 = first, default)
  *   --encoder X           auto | nvenc | amf | qsv | cpu   (default: auto)
  *   --max 2160            Highest quality to produce (2160, 1440, 1080, 720 ...)
@@ -80,6 +81,7 @@ function parseArgs(argv) {
     else if (a === '--no-hevc') opts.hevc = false;
     else if (a === '--denoise') opts.denoise = true;
     else if (a === '--quick') opts.quick = true;
+    else if (a === '--subtitles') opts.subtitlesJson = next();
     else if (a === '--progress-json') JSON_PROGRESS = true;
     else if (a === '-h' || a === '--help') { printHelp(); process.exit(0); }
     else if (a.startsWith('--')) die(`Unknown option ${a}`);
@@ -269,30 +271,32 @@ function writeMaster(outDir, file, renditions, fps) {
   writeAtomic(path.join(outDir, file), lines.join('\n') + '\n');
 }
 
+/** Subtitles: the ones picked in the app (--subtitles), or --subs/--sub-track, or a matching file next to the movie. */
 async function prepareSubtitles(opts, info, outDir) {
-  const vtt = path.join(outDir, 'subs.vtt');
-  if (opts.subs) {
+  const subs = require('./subtitles');
+  let items = [];
+  if (opts.subtitlesJson) {
+    try { items = subs.sanitizeItems(JSON.parse(opts.subtitlesJson)); } catch { die('--subtitles must be JSON'); }
+  } else if (opts.subs) {
     if (!fs.existsSync(opts.subs)) die(`Subtitle file not found: ${opts.subs}`);
-    await runFfmpeg(['-i', path.resolve(opts.subs), '-f', 'webvtt', vtt], 0, 'subtitles');
-    return 'subs.vtt';
-  }
-  if (Number.isInteger(opts.subTrack)) {
-    const subs = info.streams.filter((s) => s.codec_type === 'subtitle');
-    const st = subs[opts.subTrack];
-    if (!st) die(`Subtitle track ${opts.subTrack} doesn't exist (file has ${subs.length}).`);
+    items = [{ type: 'file', path: path.resolve(opts.subs), label: 'Subtitles', lang: 'en' }];
+  } else if (Number.isInteger(opts.subTrack)) {
+    const st = info.streams.filter((x) => x.codec_type === 'subtitle')[opts.subTrack];
+    if (!st) die(`Subtitle track ${opts.subTrack} doesn't exist.`);
     if (['hdmv_pgs_subtitle', 'dvd_subtitle', 'dvb_subtitle'].includes(st.codec_name)) {
       die('That subtitle track is a picture-based format (PGS/VobSub) and can\'t be converted to text. Use an .srt file with --subs instead.');
     }
-    await runFfmpeg(['-i', opts.input, '-map', `0:${st.index}`, '-f', 'webvtt', vtt], 0, 'subtitles');
-    return 'subs.vtt';
+    items = [{ type: 'track', stream: st.index, label: 'Subtitles', lang: (st.tags && st.tags.language) || 'en' }];
+  } else {
+    items = subs.defaultChoice(subs.findSubtitleSources(opts.input, FFPROBE));
   }
-  const found = autoSubs(opts.input);
-  if (found) {
-    console.log(`  Found subtitles next to the movie: ${path.basename(found)}`);
-    await runFfmpeg(['-i', found, '-f', 'webvtt', vtt], 0, 'subtitles');
-    return 'subs.vtt';
-  }
-  return fs.existsSync(vtt) ? 'subs.vtt' : null;
+  const made = await subs.convertSubtitles(items, opts.input, outDir, FFMPEG, (m) => console.log(m));
+  // Keep subtitles made earlier for this movie (e.g. added afterwards in the app).
+  let earlier = [];
+  try { earlier = subs.normalizeMetaSubs(JSON.parse(fs.readFileSync(path.join(outDir, 'meta.json'), 'utf8')).subtitles); } catch { /* new movie */ }
+  const all = [...earlier.filter((e) => fs.existsSync(path.join(outDir, e.file)) && !made.some((m) => m.file === e.file)), ...made];
+  if (!all.length && fs.existsSync(path.join(outDir, 'subs.vtt'))) all.push({ file: 'subs.vtt', label: 'Subtitles', lang: 'en' });
+  return all;
 }
 
 async function main() {
@@ -397,6 +401,8 @@ async function main() {
     } catch (e) { console.warn('  (could not make a poster image - not a problem)'); }
   }
   const subtitles = await prepareSubtitles(opts, info, outDir);
+  // Remember the original file (private, never served) so subtitles can be added later.
+  fs.writeFileSync(path.join(outDir, '.source.json'), JSON.stringify({ file: opts.input }));
 
   const done = { hevc: [], avc: [] };
   const preparedAt = (() => { try { return JSON.parse(fs.readFileSync(path.join(outDir, 'meta.json'), 'utf8')).preparedAt; } catch { return new Date().toISOString(); } })();

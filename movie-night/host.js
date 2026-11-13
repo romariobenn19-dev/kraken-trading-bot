@@ -12,13 +12,14 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
+const subtitles = require('./subtitles');
 
 const VIDEO_EXT = new Set(['.mp4', '.mkv', '.avi', '.mov', '.m4v', '.wmv', '.webm', '.ts', '.m2ts', '.mpg', '.mpeg', '.flv']);
 
 // Files that make up the app. The updater also uses the list published in the
 // new version's package.json (movieNight.files), so files added later are never missed.
 const APP_FILES = [
-  'server.js', 'host.js', 'prepare.js', 'package.json', 'README.md',
+  'server.js', 'host.js', 'prepare.js', 'subtitles.js', 'package.json', 'README.md',
   'setup.bat', 'setup-helper.ps1', 'setup-shortcuts.ps1', 'start-movie-night.bat', 'prepare-movie.bat',
   'public/index.html', 'public/app.js', 'public/art.js', 'public/style.css', 'public/icon.png', 'public/icon.ico',
   'public/manifest.webmanifest', 'public/sw.js', 'public/offline.html', 'public/icon-192.png', 'public/icon-512.png',
@@ -116,9 +117,9 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     sendToHosts({ t: 'jobs', jobs: publicJobs() });
   }
 
-  function enqueue({ file, title, denoise, skipAvc, quick }) {
+  function enqueue({ file, title, denoise, skipAvc, quick, subtitles: subs }) {
     const job = {
-      id: nextJobId++, file, title, denoise: !!denoise, skipAvc: !!skipAvc, quick: !!quick,
+      id: nextJobId++, file, title, denoise: !!denoise, skipAvc: !!skipAvc, quick: !!quick, subtitles: subs,
       status: 'queued', progress: null, error: null, log: '', startedAt: null, finishedAt: null,
     };
     jobs.push(job);
@@ -144,6 +145,7 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     if (job.denoise) args.push('--denoise');
     if (job.skipAvc) args.push('--no-avc');
     if (job.quick) args.push('--quick');
+    if (job.subtitles) args.push('--subtitles', JSON.stringify(job.subtitles));
     const p = spawn(process.execPath, args, {
       cwd: ROOT, windowsHide: true,
       env: { ...process.env, LIBRARY, FFMPEG, FFPROBE },
@@ -232,7 +234,8 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
   }
   function safeList(dir) { try { return fs.readdirSync(dir); } catch { return []; } }
 
-  function browse(dir) {
+  function browse(dir, kind = 'movie') {
+    const wanted = kind === 'subs' ? subtitles.SUB_EXT : VIDEO_EXT;
     const entries = [];
     let list;
     try { list = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) {
@@ -243,7 +246,7 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
       const full = path.join(dir, d.name);
       if (path.resolve(full) === path.resolve(LIBRARY)) continue;
       if (d.isDirectory()) entries.push({ type: 'dir', name: d.name, path: full });
-      else if (d.isFile() && VIDEO_EXT.has(path.extname(d.name).toLowerCase())) {
+      else if (d.isFile() && wanted.has(path.extname(d.name).toLowerCase())) {
         let size = 0;
         try { size = fs.statSync(full).size; } catch { /* ignore */ }
         entries.push({ type: 'file', name: d.name, path: full, size, title: cleanTitle(d.name) });
@@ -320,9 +323,21 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
       if (req.method === 'GET' && pathname === '/api/host/browse') {
         const dir = url.searchParams.get('dir');
         if (!dir) return json(res, 200, { dir: null, places: places(), entries: [] });
-        return json(res, 200, { ...browse(dir), places: places() });
+        return json(res, 200, { ...browse(dir, url.searchParams.get('kind') || 'movie'), places: places() });
       }
       if (req.method === 'GET' && pathname === '/api/host/jobs') return json(res, 200, publicJobs());
+      if (req.method === 'GET' && pathname === '/api/host/subsources') {
+        // ?file=<movie file>  or  ?id=<movie in the library> (uses its original file)
+        let file = url.searchParams.get('file');
+        const id = url.searchParams.get('id');
+        if (id) {
+          if (!/^[a-z0-9-]+$/.test(id)) return json(res, 400, { error: 'Bad movie id' });
+          try { file = JSON.parse(fs.readFileSync(path.join(LIBRARY, id, '.source.json'), 'utf8')).file; } catch { file = null; }
+        }
+        if (!file || !fs.existsSync(file)) return json(res, 200, { tracks: [], files: [], defaults: [], sourceMissing: true });
+        const src = subtitles.findSubtitleSources(file, FFPROBE);
+        return json(res, 200, { ...src, defaults: subtitles.defaultChoice(src), movieFile: file });
+      }
       if (req.method === 'GET' && pathname === '/api/host/update') return json(res, 200, await checkUpdate());
 
       if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
@@ -334,8 +349,37 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
           return json(res, 400, { error: 'That file isn\'t a movie I can read.' });
         }
         const title = String(body.title || '').trim().slice(0, 120) || cleanTitle(file);
-        const job = enqueue({ file, title, denoise: body.denoise, skipAvc: body.skipAvc, quick: body.quick !== false });
+        const job = enqueue({ file, title, denoise: body.denoise, skipAvc: body.skipAvc, quick: body.quick !== false,
+          subtitles: Array.isArray(body.subtitles) ? subtitles.sanitizeItems(body.subtitles) : null });
         return json(res, 200, { id: job.id });
+      }
+      if (pathname === '/api/host/add-subs') {
+        const id = String(body.id || '');
+        if (!/^[a-z0-9-]+$/.test(id) || !fs.existsSync(path.join(LIBRARY, id, 'meta.json'))) return json(res, 400, { error: 'Movie not found' });
+        const items = subtitles.sanitizeItems(body.items);
+        if (!items.length) return json(res, 400, { error: 'Pick at least one subtitle.' });
+        let movieFile = null;
+        try { movieFile = JSON.parse(fs.readFileSync(path.join(LIBRARY, id, '.source.json'), 'utf8')).file; } catch { /* only files possible */ }
+        if (items.some((i) => i.type === 'track') && (!movieFile || !fs.existsSync(movieFile))) {
+          return json(res, 400, { error: 'The original movie file has moved or been deleted, so its built-in subtitles can\'t be read. Choose a subtitle file instead.' });
+        }
+        const made = await subtitles.convertSubtitles(items, movieFile, path.join(LIBRARY, id), FFMPEG);
+        if (!made.length) return json(res, 400, { error: 'Those subtitles couldn\'t be read. Try a different file or track.' });
+        subtitles.addToMeta(path.join(LIBRARY, id), made);
+        libraryChanged();
+        return json(res, 200, { added: made });
+      }
+      if (pathname === '/api/host/remove-subs') {
+        const id = String(body.id || '');
+        const file = String(body.file || '');
+        if (!/^[a-z0-9-]+$/.test(id) || !/^subs\/[a-z0-9-]+\.vtt$|^subs\.vtt$/.test(file)) return json(res, 400, { error: 'Bad request' });
+        const metaFile = path.join(LIBRARY, id, 'meta.json');
+        const meta = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
+        meta.subtitles = subtitles.normalizeMetaSubs(meta.subtitles).filter((x) => x.file !== file);
+        fs.writeFileSync(metaFile, JSON.stringify(meta, null, 2));
+        fs.rmSync(path.join(LIBRARY, id, file), { force: true });
+        libraryChanged();
+        return json(res, 200, {});
       }
       if (pathname === '/api/host/cancel') return json(res, cancel(Number(body.id)) ? 200 : 404, {});
       if (pathname === '/api/host/clear') {
@@ -376,9 +420,11 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
   function hevcDevices() {
     const cutoff = Date.now() - 60 * 86400000;
     const recent = Object.values(config.devices || {}).filter((d) => new Date(d.lastSeen).getTime() >= cutoff);
-    const cannot = recent.filter((d) => !d.hevc).map((d) => (d.host ? `${d.name} (this laptop's browser)` : d.name));
-    const hevcConfirmed = recent.some((d) => !d.host) && cannot.length === 0;
-    return { hevcConfirmed, cannotPlayHevc: [...new Set(cannot)] };
+    const bad = recent.filter((d) => !d.hevc);
+    const cannot = [...new Set(bad.filter((d) => !d.host).map((d) => `${d.name}'s device`))];
+    if (bad.some((d) => d.host)) cannot.push("this laptop's browser");
+    const hevcConfirmed = recent.some((d) => !d.host) && bad.length === 0;
+    return { hevcConfirmed, cannotPlayHevc: cannot.length > 3 ? [...cannot.slice(0, 3), 'others'] : cannot };
   }
 
   function onStatus() { /* device capabilities are recorded at hello */ }

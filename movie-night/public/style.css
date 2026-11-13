@@ -156,7 +156,9 @@ input#name, .confirm input { background: var(--bg); border: 1px solid var(--line
 #player { position: fixed; inset: 0; background: #000; color: #f6eedf; }
 #stage { position: absolute; inset: 0; background: #000; overflow: hidden; }
 video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
-video::cue { font-size: clamp(16px, 3.2vw, 32px); background: rgba(0,0,0,.55); }
+video::cue { font-size: clamp(16px, 3.2vw, 32px); background: rgba(0,0,0,.6); line-height: 1.3; }
+#stage.subs-s video::cue { font-size: clamp(13px, 2.3vw, 24px); }
+#stage.subs-l video::cue { font-size: clamp(20px, 4.4vw, 46px); }
 
 .chrome { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: space-between;
   transition: opacity .25s; pointer-events: none; }
@@ -311,3 +313,33 @@ input#seek:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(233,
 .replaced-card h2 { margin: 6px 0 0; font-size: 22px; }
 .replaced-card p { margin: 0 0 12px; }
 .replaced-art { width: 96px; height: 96px; border-radius: 50%; background: var(--panel-2); overflow: hidden; margin: 0 auto; }
+
+/* Subtitles: choices in dialogs */
+.field-title { font-weight: 700; font-size: 14px; margin-top: 4px; }
+.subs-choices { display: grid; gap: 4px; background: var(--bg); border: 1px solid var(--line); border-radius: 14px; padding: 8px 10px; max-height: 220px; overflow-y: auto; }
+.subs-choices .check { padding: 4px 2px; }
+.subs-choices .note { font-size: 12px; color: var(--muted); }
+.subs-choices .check.disabled { opacity: .55; cursor: default; }
+.subs-current { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 4px 6px 4px 12px; font-size: 14px; }
+.chip button { border: 0; background: none; cursor: pointer; padding: 2px 6px; border-radius: 999px; color: var(--muted); }
+.chip button:hover { background: var(--line); color: var(--text); }
+.card .subs-btn { position: absolute; top: 8px; right: 52px; background: rgba(255, 250, 242, .92); border: 1px solid var(--line); border-radius: 999px;
+  padding: 3px 9px; cursor: pointer; font-size: 12px; font-weight: 700; color: var(--text); }
+
+/* Subtitles: player menu */
+.chrome .bottom { position: relative; }
+.subs-menu { position: absolute; right: 16px; bottom: calc(100% - 30px); width: min(300px, calc(100vw - 32px)); background: var(--panel); color: var(--text);
+  border-radius: 18px; padding: 12px; box-shadow: 0 16px 40px rgba(0,0,0,.45); display: grid; gap: 10px; z-index: 5; max-height: 60vh; overflow-y: auto; }
+.subs-menu h4 { margin: 0; font: 700 13px system-ui, sans-serif; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.subs-menu .opt { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: none; border: 0; border-radius: 10px; padding: 8px 10px; cursor: pointer; color: var(--text); font-size: 15px; }
+.subs-menu .opt:hover { background: var(--panel-2); }
+.subs-menu .opt.on { background: var(--panel-2); font-weight: 700; }
+.subs-menu .opt.on::after { content: "✓"; margin-left: auto; color: var(--accent); }
+.subs-menu .seg { display: flex; gap: 6px; }
+.subs-menu .seg button { flex: 1; border: 1px solid var(--line); background: var(--bg); border-radius: 10px; padding: 7px 0; cursor: pointer; color: var(--text); font-weight: 700; }
+.subs-menu .seg button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.subs-menu .timing { display: flex; align-items: center; gap: 6px; }
+.subs-menu .timing span { flex: 1; text-align: center; font-variant-numeric: tabular-nums; font-size: 14px; }
+.subs-menu .timing button { border: 1px solid var(--line); background: var(--bg); border-radius: 10px; padding: 7px 10px; cursor: pointer; color: var(--text); font-weight: 700; }
+.subs-menu .hint { font-size: 12px; color: var(--muted); margin: -4px 0 0; }
