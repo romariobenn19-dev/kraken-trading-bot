@@ -37,6 +37,7 @@ const FFMPEG = process.env.FFMPEG || 'ffmpeg';
 const FFPROBE = process.env.FFPROBE || 'ffprobe';
 const LIBRARY = process.env.LIBRARY || path.join(__dirname, 'library');
 const SEGMENT_SECONDS = 4;
+const EARLY_SEGMENTS = 8; // ~32 s converted before the movie can be started
 // --progress-json: machine-readable progress for the Movie Night app ("@@{...}" lines).
 let JSON_PROGRESS = false;
 const step = { n: 0, of: 0 };
@@ -427,6 +428,9 @@ async function main() {
       fs.mkdirSync(dir, { recursive: true });
       const denoise = opts.denoise ? 'hqdn3d=1.5:1.5:6:6,' : '';
       const vf = `${denoise}scale=${width}:${height}:flags=lanczos${toneMap},format=yuv420p,setsar=1`;
+      // The first version is written as a growing ("event") playlist so it can be watched
+      // while it's still being made; the others are normal finished playlists.
+      const watchWhileConverting = step.n === 1;
       const args = [
         '-i', opts.input,
         '-map', `0:${video.index}`,
@@ -437,14 +441,30 @@ async function main() {
         '-force_key_frames', `expr:gte(t,n_forced*${SEGMENT_SECONDS})`,
         ...(audio ? ['-c:a', 'aac', '-b:a', '160k', '-ac', '2', '-ar', '48000'] : []),
         '-sn', '-dn', '-map_metadata', '-1', '-map_chapters', '-1',
-        '-f', 'hls', '-hls_time', String(SEGMENT_SECONDS), '-hls_playlist_type', 'vod',
+        '-f', 'hls', '-hls_time', String(SEGMENT_SECONDS), '-hls_playlist_type', watchWhileConverting ? 'event' : 'vod',
         '-hls_segment_type', 'fmp4', '-hls_fmp4_init_filename', 'init.mp4',
         // Relative names + running inside the folder: on Windows FFmpeg otherwise
         // writes init.mp4 to the current folder instead of next to the playlist.
         '-hls_segment_filename', 'seg_%05d.m4s',
         'index.m3u8',
       ];
-      await runFfmpeg(args, duration, `${job.label}${job.tag === 'hq' ? ' HQ' : job.tag === 'lite' ? ' Lite' : ''} ${job.family.toUpperCase()}`, dir);
+      // Publish the movie as soon as ~30 s of it are ready ("watch while it converts").
+      let early = null;
+      if (watchWhileConverting) {
+        const need = Math.max(1, Math.min(EARLY_SEGMENTS, Math.ceil(duration / SEGMENT_SECONDS) - 1));
+        early = setInterval(() => {
+          try {
+            const segs = (fs.readFileSync(path.join(dir, 'index.m3u8'), 'utf8').match(/#EXTINF/g) || []).length;
+            if (segs < need || !fs.existsSync(path.join(dir, 'init.mp4'))) return;
+            clearInterval(early); early = null;
+            publish(false, { dir: dirName, label: job.label, width, height, codec: job.codec, avg: job.kbps * 1000, peak: job.kbps * 1600, family: job.family });
+            console.log('\n  Watchable now - converting ahead of you...');
+          } catch { /* playlist not written yet */ }
+        }, 2000);
+      }
+      try {
+        await runFfmpeg(args, duration, `${job.label}${job.tag === 'hq' ? ' HQ' : job.tag === 'lite' ? ' Lite' : ''} ${job.family.toUpperCase()}`, dir);
+      } finally { if (early) clearInterval(early); }
       if (!fs.existsSync(path.join(dir, 'init.mp4'))) throw new Error(`FFmpeg didn't create ${path.join(dir, 'init.mp4')}`);
       fs.writeFileSync(path.join(dir, '.done'), new Date().toISOString());
     }
@@ -453,10 +473,13 @@ async function main() {
     publish(step.n === jobs.length);
   }
 
-  /** Make the movie playable with what's finished so far (called after every version). */
-  function publish(final) {
-    const hevc = [...done.hevc].sort((a, b) => b.peak - a.peak);
-    const avc = [...done.avc].sort((a, b) => b.peak - a.peak);
+  /**
+   * Make the movie playable with what's finished so far (called after every version).
+   * `converting` = a version that's still being written (watch while it converts).
+   */
+  function publish(final, converting) {
+    const hevc = [...done.hevc, ...(converting && converting.family === 'hevc' ? [converting] : [])].sort((a, b) => b.peak - a.peak);
+    const avc = [...done.avc, ...(converting && converting.family === 'avc' ? [converting] : [])].sort((a, b) => b.peak - a.peak);
     if (hevc.length) writeMaster(outDir, 'master-hevc.m3u8', hevc, fps);
     if (avc.length) writeMaster(outDir, 'master-avc.m3u8', avc, fps);
     const meta = {
@@ -468,11 +491,12 @@ async function main() {
       poster: fs.existsSync(poster) ? 'poster.jpg' : null,
       subtitles,
       partial: !final,
+      converting: !!converting,
       preparedAt: preparedAt,
     };
     writeAtomic(path.join(outDir, 'meta.json'), JSON.stringify(meta, null, 2));
     emit({ ready: true, id, partial: !final });
-    if (!final && step.n === 1) console.log('  Watchable now - making the backup versions...');
+    if (!final && step.n === 1 && !converting) console.log('\n  First version finished - making the backup versions...');
   }
 
   const totalGb = [...done.hevc, ...done.avc].reduce((s, r) => s + r.bytes, 0) / 1e9;

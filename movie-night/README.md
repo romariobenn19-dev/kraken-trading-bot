@@ -79,7 +79,7 @@ Use **Google Chrome** on the laptop and on her tablet. Chrome plays the HEVC ver
 
 ## Auto-add folder (easiest)
 
-Save movies into **Videos\Movie Night** on the laptop. That's it: each one is added and converted by itself.
+Save movies into **Videos\Movie Night** on the laptop. That's it: each one is added and converted by itself, and you can start watching within about a minute while the rest converts.
 
 - **Subtitles:** save the subtitle file in the same folder (or in the movie's own subfolder). It's matched automatically, even if the names differ: `Frieren - 14.mkv` + `[Group] Frieren - 14 [English].srt`, or a film's folder with `english.srt` inside. Several languages work (`Film.en.srt`, `Film.el.srt`).
 - **Subtitles you save later** are added to the movie automatically. No reconverting.
@@ -95,7 +95,7 @@ In Movie Night on your laptop, click **＋ Add movie**:
 - Optional: **Clean up film grain**, for older or grainy films, so they look sharper.
 - Optional: **Skip H.264 backups**, about a third faster. The app checks every device you two use (her tablet, your phone, the laptop's browser) and ticks this for you only when all of them can play HEVC.
 - **Quick** (ticked by default): only makes the versions her tablet uses: 1080p HQ, 1080p, **1080p Lite** (full 1080p at about 1.6 Mbps, so slow Wi-Fi can stay at 1080p) and 480p. Untick it if you also want 4K / 1440p versions.
-- Click **Prepare movie**. The version she watches is made first, and **the movie appears on both screens as soon as that's done**, roughly 10–15 minutes for a 1h30 film. The backup versions (used if her Wi-Fi dips) keep going in the background; the card says "finishing backups…" until they're done.
+- Click **Prepare movie**. **You can start watching within about a minute**: the movie appears (marked "⏳ Converting · watch now") once the first ~30 seconds are ready, and conversion keeps running ahead of you. Until it's finished you can only skip within the part that's done; the time shows "ready up to …". The backup versions (used if her Wi-Fi dips) keep going in the background; the card says "finishing backups…" until they're done.
 
 Good to know:
 - Subtitles: put a matching `.srt` next to the movie (`Film.mkv` and `Film.srt`) and they're picked up automatically.

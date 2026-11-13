@@ -118,7 +118,7 @@ function movieCard(mv, { progress } = {}) {
     <div class="tile-meta"><b></b><span></span></div>`;
   if (img) b.querySelector('.tile-img').style.backgroundImage = `url("${img}")`;
   b.querySelector('b').textContent = title;
-  b.querySelector('.tile-meta span').textContent = progress ? `${sub ? `${sub} · ` : ''}${timeLeft(mv)}` : sub;
+  b.querySelector('.tile-meta span').textContent = mv.converting ? '⏳ Converting · watch now' : progress ? `${sub ? `${sub} · ` : ''}${timeLeft(mv)}` : sub;
   b.title = mv.tmdb && mv.tmdb.overview ? mv.tmdb.overview : mv.title;
   b.onclick = () => play(mv);
   b.appendChild(tileActions(mv));

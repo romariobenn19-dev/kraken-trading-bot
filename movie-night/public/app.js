@@ -218,7 +218,17 @@ function connect() {
     setTimeout(connect, Math.min(10000, 500 * 2 ** retry++));
   };
 }
-function send(m) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); }
+function send(m) {
+  // Can't skip past the part that's been converted yet.
+  if (m && m.t === 'seek' && typeof convertedUpTo === 'function') {
+    const end = convertedUpTo();
+    if (Number.isFinite(end) && m.pos > end - 8) {
+      m = { ...m, pos: Math.max(0, end - 8) };
+      toast(`Still converting: you can skip up to ${fmt(end - 8)} for now.`);
+    }
+  }
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify(m));
+}
 function ping() { send({ t: 'ping', c: Date.now() }); }
 setInterval(ping, 10000);
 
@@ -585,7 +595,7 @@ function reportStatus() {
   tuneAbrForBuffer();
   // During a quality upgrade the buffer is briefly short on purpose; real stalls still report via 'waiting'.
   const ahead = Date.now() < upgradeGraceUntil ? Math.max(bufferAhead(), 5) : bufferAhead();
-  const dur = video.duration || meta.duration || 0;
+  const dur = duration(); // the whole movie, even while it's still converting
   const lv = hls && hls.levels[hls.currentLevel];
   send({
     t: 'status', movieId: meta.id, ct: video.currentTime, buffer: ahead, visible, error: playerError,
@@ -633,12 +643,27 @@ $('seek').addEventListener('change', () => {
   send({ t: 'seek', pos: seekValue() });
 });
 function seekValue() { return (Number($('seek').value) / 1000) * duration(); }
-function duration() { return video.duration || (meta && meta.duration) || 0; }
+function duration() {
+  // While a movie is still converting, the browser only knows the part that's done.
+  const d = video.duration;
+  if (meta && (meta.converting || !Number.isFinite(d) || !d)) return meta.duration || (Number.isFinite(d) ? d : 0);
+  return d || (meta && meta.duration) || 0;
+}
+
+/** How far the movie has been converted so far (Infinity once it's finished). */
+function convertedUpTo() {
+  if (!meta || !meta.converting || !hls) return Infinity;
+  const lv = hls.levels[hls.currentLevel >= 0 ? hls.currentLevel : 0];
+  const d = lv && lv.details;
+  if (!d || !d.live) return Infinity; // the playlist has its end marker: fully converted
+  return d.totalduration || 0;
+}
 
 function updateTime() {
   if (seeking) return;
   const d = duration();
-  $('time').textContent = `${fmt(video.currentTime)} / ${fmt(d)}`;
+  const conv = convertedUpTo();
+  $('time').textContent = `${fmt(video.currentTime)} / ${fmt(d)}${Number.isFinite(conv) ? ` · ready up to ${fmt(conv)}` : ''}`;
   $('seek').value = d ? String(Math.round((video.currentTime / d) * 1000)) : '0';
   paintSeek();
 }
@@ -750,7 +775,10 @@ function renderHold() {
   const needFor = (p) => (state.hold.reason === 'starting' && p.shaky ? Math.max(need, 45) : need);
   const who = (state.hold.who || []).join(' & ');
   const pup = personalInfo.dog || 'The pup';
-  $('holdText').textContent = state.hold.reason === 'buffering'
+  const conv = convertedUpTo();
+  if (Number.isFinite(conv) && conv - expectedPos() < 12) {
+    $('holdText').textContent = `The laptop is still converting this part of the movie (ready up to ${fmt(conv)}). It'll carry on in a moment.`;
+  } else $('holdText').textContent = state.hold.reason === 'buffering'
     ? `${who || 'Someone'}'s Wi-Fi had a hiccup, so we've paused together. ${pup} is fetching a bigger buffer (${need}s) so it doesn't happen again.`
     : `${pup} is fetching the movie…${who ? ` (waiting for ${who})` : ''}`;
   $('holdBars').innerHTML = peers.map((p) => {
@@ -866,7 +894,7 @@ function renderJobs(jobs) {
     else if (j.status === 'running') {
       if (p && p.steps) {
         pct = ((p.step - 1) + p.pct / 100) / p.steps * 100;
-        detail = (j.ready ? 'Ready to watch ✓ · making backups: ' : 'Making the version you\'ll watch: ') +
+        detail = (j.ready ? (p.step === 1 ? 'Watchable now ✓ · converting ahead of you: ' : 'Ready to watch ✓ · making backups: ') : 'Making the version you\'ll watch: ') +
           `${p.label} (${p.step} of ${p.steps}) · ${p.pct}%` + (p.eta ? ` · this part ~${fmt(p.eta)} left` : '');
       } else detail = 'Starting…';
     } else if (j.status === 'done') { detail = 'Ready to watch ✓'; pct = 100; }
@@ -1315,6 +1343,7 @@ document.addEventListener('pointerdown', (e) => {
 function syncOpenMovieSubs() {
   if (!meta) return;
   const fresh = movies.find((m) => m.id === meta.id);
+  if (fresh && meta.converting && !fresh.converting) { meta.converting = false; meta.partial = fresh.partial; updateTime(); }
   if (!fresh || JSON.stringify(subsOf(fresh)) === JSON.stringify(subsOf(meta))) return;
   const had = subsOf(meta).length;
   meta = fresh;
