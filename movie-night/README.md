@@ -47,10 +47,10 @@ In Movie Night on your laptop, click **＋ Add movie**:
 - Check the title. It's tidied automatically, e.g. "Resident.Evil.2026.REPACK.1080p…" becomes "Resident Evil (2026)".
 - Optional: **Clean up film grain**, for older or grainy films, so they look sharper.
 - Optional: **Skip H.264 backups**, about a third faster. The app ticks this for you once her tablet has played an HEVC movie smoothly.
-- Click **Prepare movie**. A progress bar shows how it's going, and the movie appears on both screens when it's ready.
+- **Quick** (ticked by default): only makes the versions her tablet uses. Untick it if you also want 4K / 1440p versions.
+- Click **Prepare movie**. The version she watches is made first, and **the movie appears on both screens as soon as that's done**, roughly 10–15 minutes for a 1h30 film. The backup versions (used if her Wi-Fi dips) keep going in the background; the card says "finishing backups…" until they're done.
 
 Good to know:
-- A 1h30 film takes roughly 30 minutes on your laptop's graphics card. Do it earlier in the day.
 - Subtitles: put a matching `.srt` next to the movie (`Film.mkv` and `Film.srt`) and they're picked up automatically.
 - Disk space: about 3–5 GB per 1080p film, more for 4K. Delete movies with the 🗑 on their card. Your original file is never touched.
 - Only movie files you have work. Netflix and other paid services lock their video so it can't be converted.

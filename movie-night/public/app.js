@@ -124,7 +124,7 @@ async function refreshMovies() {
     else poster.textContent = '🎞️';
     b.insertAdjacentHTML('beforeend', `<span class="card-bow">${Art.bowSvg()}</span>`);
     b.querySelector('b').textContent = mv.title;
-    b.querySelector('span').textContent = `${fmt(mv.duration)} · up to ${best}${mv.subtitles ? ' · CC' : ''}`;
+    b.querySelector('span').textContent = `${fmt(mv.duration)} · up to ${best}${mv.subtitles ? ' · CC' : ''}${mv.partial ? ' · finishing backups…' : ''}`;
     b.onclick = () => send({ t: 'load', movieId: mv.id });
     if (isHost) {
       const del = document.createElement('span');
@@ -623,7 +623,8 @@ function renderJobs(jobs) {
     else if (j.status === 'running') {
       if (p && p.steps) {
         pct = ((p.step - 1) + p.pct / 100) / p.steps * 100;
-        detail = `Making ${p.label} (${p.step} of ${p.steps}) · ${p.pct}%` + (p.eta ? ` · this part ~${fmt(p.eta)} left` : '');
+        detail = (j.ready ? 'Ready to watch ✓ · making backups: ' : 'Making the version you\'ll watch: ') +
+          `${p.label} (${p.step} of ${p.steps}) · ${p.pct}%` + (p.eta ? ` · this part ~${fmt(p.eta)} left` : '');
       } else detail = 'Starting…';
     } else if (j.status === 'done') { detail = 'Ready to watch ✓'; pct = 100; }
     else if (j.status === 'cancelled') detail = 'Stopped';
@@ -707,6 +708,7 @@ function pickFile(e) {
   $('confirmFile').textContent = `${e.name} · ${fmtSize(e.size)}`;
   $('titleInput').value = e.title;
   $('optDenoise').checked = false;
+  $('optQuick').checked = true;
   const confirmed = hostInfo && hostInfo.hevcConfirmed;
   $('optSkipAvc').checked = !!confirmed;
   $('skipHint').textContent = confirmed
@@ -720,7 +722,7 @@ $('startPrep').onclick = async () => {
   try {
     await api('/api/host/prepare', {
       file: pickedFile.path, title: $('titleInput').value.trim(),
-      denoise: $('optDenoise').checked, skipAvc: $('optSkipAvc').checked,
+      denoise: $('optDenoise').checked, skipAvc: $('optSkipAvc').checked, quick: $('optQuick').checked,
     });
     closePicker();
     toast('Preparing in the background. You can keep using your laptop.');

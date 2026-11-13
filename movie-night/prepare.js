@@ -20,6 +20,7 @@
  *   --max 2160            Highest quality to produce (2160, 1440, 1080, 720 ...)
  *   --no-avc              Skip the H.264 compatibility versions (faster)
  *   --no-hevc             Skip the HEVC versions (H.264 only)
+ *   --quick               Only the versions a 1080p tablet uses (1080p HQ, 720p, 480p)
  *   --denoise             Gently clean film grain/noise first. Grain wastes bitrate, so
  *                         grainy films come out noticeably sharper at the same size.
  *
@@ -78,6 +79,7 @@ function parseArgs(argv) {
     else if (a === '--no-avc') opts.avc = false;
     else if (a === '--no-hevc') opts.hevc = false;
     else if (a === '--denoise') opts.denoise = true;
+    else if (a === '--quick') opts.quick = true;
     else if (a === '--progress-json') JSON_PROGRESS = true;
     else if (a === '-h' || a === '--help') { printHelp(); process.exit(0); }
     else if (a.startsWith('--')) die(`Unknown option ${a}`);
@@ -251,6 +253,12 @@ function measureRendition(dir) {
   return { avg: Math.round(avg), peak: Math.round(Math.max(peak, avg)), bytes: bytes + initBytes };
 }
 
+/** Write via a temp file so the server never reads a half-written file. */
+function writeAtomic(file, data) {
+  fs.writeFileSync(`${file}.tmp`, data);
+  fs.renameSync(`${file}.tmp`, file);
+}
+
 function writeMaster(outDir, file, renditions, fps) {
   const lines = ['#EXTM3U', '#EXT-X-VERSION:7', '#EXT-X-INDEPENDENT-SEGMENTS'];
   for (const r of renditions) {
@@ -258,7 +266,33 @@ function writeMaster(outDir, file, renditions, fps) {
       `CODECS="${r.codec},mp4a.40.2"${fps ? `,FRAME-RATE=${fps.toFixed(3)}` : ''}`);
     lines.push(`${r.dir}/index.m3u8`);
   }
-  fs.writeFileSync(path.join(outDir, file), lines.join('\n') + '\n');
+  writeAtomic(path.join(outDir, file), lines.join('\n') + '\n');
+}
+
+async function prepareSubtitles(opts, info, outDir) {
+  const vtt = path.join(outDir, 'subs.vtt');
+  if (opts.subs) {
+    if (!fs.existsSync(opts.subs)) die(`Subtitle file not found: ${opts.subs}`);
+    await runFfmpeg(['-i', path.resolve(opts.subs), '-f', 'webvtt', vtt], 0, 'subtitles');
+    return 'subs.vtt';
+  }
+  if (Number.isInteger(opts.subTrack)) {
+    const subs = info.streams.filter((s) => s.codec_type === 'subtitle');
+    const st = subs[opts.subTrack];
+    if (!st) die(`Subtitle track ${opts.subTrack} doesn't exist (file has ${subs.length}).`);
+    if (['hdmv_pgs_subtitle', 'dvd_subtitle', 'dvb_subtitle'].includes(st.codec_name)) {
+      die('That subtitle track is a picture-based format (PGS/VobSub) and can\'t be converted to text. Use an .srt file with --subs instead.');
+    }
+    await runFfmpeg(['-i', opts.input, '-map', `0:${st.index}`, '-f', 'webvtt', vtt], 0, 'subtitles');
+    return 'subs.vtt';
+  }
+  const found = autoSubs(opts.input);
+  if (found) {
+    console.log(`  Found subtitles next to the movie: ${path.basename(found)}`);
+    await runFfmpeg(['-i', found, '-f', 'webvtt', vtt], 0, 'subtitles');
+    return 'subs.vtt';
+  }
+  return fs.existsSync(vtt) ? 'subs.vtt' : null;
 }
 
 async function main() {
@@ -308,7 +342,7 @@ async function main() {
 
   // Only make qualities that don't exceed the source (with a little tolerance).
   const fits = (r) => r.width <= srcW * 1.05 && LABEL_HEIGHT[r.label] <= opts.max;
-  const jobs = [];
+  let jobs = [];
   if (opts.hevc) for (const r of HEVC_LADDER.filter(fits)) jobs.push({ ...r, family: 'hevc' });
   if (opts.avc) for (const r of AVC_LADDER.filter(fits)) jobs.push({ ...r, family: 'avc' });
   if (!jobs.length) {
@@ -318,6 +352,14 @@ async function main() {
     if (opts.avc) jobs.push({ ...AVC_LADDER[AVC_LADDER.length - 1], width: w, family: 'avc' });
   }
 
+  // Quick: only what a 1080p screen actually uses.
+  if (opts.quick) {
+    const QUICK = new Set(['1080p-hq', '720p', '480p']);
+    // (1080p H.264 stays: it's what a tablet without HEVC would watch.)
+    const quick = jobs.filter((j) => QUICK.has(`${j.label}${j.tag ? `-${j.tag}` : ''}`) || (j.family === 'avc' && j.label === '1080p'));
+    if (quick.length) jobs = quick;
+  }
+
   // Sharpest (slowest) settings for the top version of each kind and for 1080p HQ; faster for backups.
   for (const fam of ['hevc', 'avc']) {
     const first = jobs.find((j) => j.family === fam);
@@ -325,7 +367,24 @@ async function main() {
   }
   for (const j of jobs) if (j.tag === 'hq') j.best = true;
 
+  // Make the version people will actually watch first, so the movie is watchable
+  // while the backup versions are still being made.
+  const watchFirst = jobs.find((j) => j.family === 'hevc' && j.tag === 'hq') || jobs.find((j) => j.family === 'hevc') || jobs[0];
+  const avcTop = jobs.find((j) => j.family === 'avc');
+  jobs = [watchFirst, ...(avcTop && avcTop !== watchFirst ? [avcTop] : []), ...jobs.filter((j) => j !== watchFirst && j !== avcTop)];
+
+  // Poster and subtitles first (seconds), so the movie looks complete the moment it appears.
+  const poster = path.join(outDir, 'poster.jpg');
+  if (!fs.existsSync(poster)) {
+    try {
+      await runFfmpeg(['-ss', String(Math.max(0, duration * 0.12)), '-i', opts.input, '-map', `0:${video.index}`,
+        '-frames:v', '1', '-vf', `scale=640:-2${toneMap},format=yuvj420p`, '-q:v', '4', poster], 0, 'poster');
+    } catch (e) { console.warn('  (could not make a poster image - not a problem)'); }
+  }
+  const subtitles = await prepareSubtitles(opts, info, outDir);
+
   const done = { hevc: [], avc: [] };
+  const preparedAt = (() => { try { return JSON.parse(fs.readFileSync(path.join(outDir, 'meta.json'), 'utf8')).preparedAt; } catch { return new Date().toISOString(); } })();
   step.of = jobs.length;
   for (const job of jobs) {
     step.n++;
@@ -363,58 +422,30 @@ async function main() {
     }
     const m = measureRendition(dir);
     done[job.family].push({ dir: dirName, label: job.label, width, height, codec: job.codec, avg: m.avg, peak: m.peak, bytes: m.bytes });
+    publish(step.n === jobs.length);
   }
 
-  // Highest quality first in the playlists.
-  for (const fam of ['hevc', 'avc']) done[fam].sort((a, b) => b.peak - a.peak);
-  if (done.hevc.length) writeMaster(outDir, 'master-hevc.m3u8', done.hevc, fps);
-  if (done.avc.length) writeMaster(outDir, 'master-avc.m3u8', done.avc, fps);
-
-  // Poster image.
-  const poster = path.join(outDir, 'poster.jpg');
-  if (!fs.existsSync(poster)) {
-    try {
-      await runFfmpeg(['-ss', String(Math.max(0, duration * 0.12)), '-i', opts.input, '-map', `0:${video.index}`,
-        '-frames:v', '1', '-vf', `scale=640:-2${toneMap},format=yuvj420p`, '-q:v', '4', poster], 0, 'poster');
-    } catch (e) { console.warn('  (could not make a poster image - not a problem)'); }
+  /** Make the movie playable with what's finished so far (called after every version). */
+  function publish(final) {
+    const hevc = [...done.hevc].sort((a, b) => b.peak - a.peak);
+    const avc = [...done.avc].sort((a, b) => b.peak - a.peak);
+    if (hevc.length) writeMaster(outDir, 'master-hevc.m3u8', hevc, fps);
+    if (avc.length) writeMaster(outDir, 'master-avc.m3u8', avc, fps);
+    const meta = {
+      id, title, duration, fps,
+      width: srcW, height: srcH, hdrSource: isHdr,
+      hevc: hevc.length ? 'master-hevc.m3u8' : null,
+      avc: avc.length ? 'master-avc.m3u8' : null,
+      renditions: [...hevc, ...avc].map(({ dir, label, codec, avg, width, height }) => ({ dir, label, codec, avg, width, height })),
+      poster: fs.existsSync(poster) ? 'poster.jpg' : null,
+      subtitles,
+      partial: !final,
+      preparedAt: preparedAt,
+    };
+    writeAtomic(path.join(outDir, 'meta.json'), JSON.stringify(meta, null, 2));
+    emit({ ready: true, id, partial: !final });
+    if (!final && step.n === 1) console.log('  Watchable now - making the backup versions...');
   }
-
-  // Subtitles.
-  let subtitles = null;
-  const vtt = path.join(outDir, 'subs.vtt');
-  if (opts.subs) {
-    if (!fs.existsSync(opts.subs)) die(`Subtitle file not found: ${opts.subs}`);
-    await runFfmpeg(['-i', path.resolve(opts.subs), '-f', 'webvtt', vtt], 0, 'subtitles');
-    subtitles = 'subs.vtt';
-  } else if (Number.isInteger(opts.subTrack)) {
-    const subs = info.streams.filter((s) => s.codec_type === 'subtitle');
-    const st = subs[opts.subTrack];
-    if (!st) die(`Subtitle track ${opts.subTrack} doesn't exist (file has ${subs.length}).`);
-    if (['hdmv_pgs_subtitle', 'dvd_subtitle', 'dvb_subtitle'].includes(st.codec_name)) {
-      die('That subtitle track is a picture-based format (PGS/VobSub) and can\'t be converted to text. Use an .srt file with --subs instead.');
-    }
-    await runFfmpeg(['-i', opts.input, '-map', `0:${st.index}`, '-f', 'webvtt', vtt], 0, 'subtitles');
-    subtitles = 'subs.vtt';
-  } else if (autoSubs(opts.input)) {
-    const found = autoSubs(opts.input);
-    console.log(`  Found subtitles next to the movie: ${path.basename(found)}`);
-    await runFfmpeg(['-i', found, '-f', 'webvtt', vtt], 0, 'subtitles');
-    subtitles = 'subs.vtt';
-  } else if (fs.existsSync(vtt)) {
-    subtitles = 'subs.vtt';
-  }
-
-  const meta = {
-    id, title, duration, fps,
-    width: srcW, height: srcH, hdrSource: isHdr,
-    hevc: done.hevc.length ? 'master-hevc.m3u8' : null,
-    avc: done.avc.length ? 'master-avc.m3u8' : null,
-    renditions: [...done.hevc, ...done.avc].map(({ dir, label, codec, avg, width, height }) => ({ dir, label, codec, avg, width, height })),
-    poster: fs.existsSync(poster) ? 'poster.jpg' : null,
-    subtitles,
-    preparedAt: new Date().toISOString(),
-  };
-  fs.writeFileSync(path.join(outDir, 'meta.json'), JSON.stringify(meta, null, 2));
 
   const totalGb = [...done.hevc, ...done.avc].reduce((s, r) => s + r.bytes, 0) / 1e9;
   emit({ done: true, id, title, gb: totalGb });

@@ -104,8 +104,8 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
   let lastPush = 0;
 
   function publicJobs() {
-    return jobs.map(({ id, title, file, status, progress, error, startedAt, finishedAt }) =>
-      ({ id, title, file: path.basename(file), status, progress, error, startedAt, finishedAt }));
+    return jobs.map(({ id, title, file, status, progress, error, startedAt, finishedAt, ready }) =>
+      ({ id, title, file: path.basename(file), status, progress, error, startedAt, finishedAt, ready: !!ready }));
   }
   function pushJobs(force) {
     const now = Date.now();
@@ -114,9 +114,9 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     sendToHosts({ t: 'jobs', jobs: publicJobs() });
   }
 
-  function enqueue({ file, title, denoise, skipAvc }) {
+  function enqueue({ file, title, denoise, skipAvc, quick }) {
     const job = {
-      id: nextJobId++, file, title, denoise: !!denoise, skipAvc: !!skipAvc,
+      id: nextJobId++, file, title, denoise: !!denoise, skipAvc: !!skipAvc, quick: !!quick,
       status: 'queued', progress: null, error: null, log: '', startedAt: null, finishedAt: null,
     };
     jobs.push(job);
@@ -141,6 +141,7 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     const args = [path.join(ROOT, 'prepare.js'), job.file, '--title', job.title, '--progress-json'];
     if (job.denoise) args.push('--denoise');
     if (job.skipAvc) args.push('--no-avc');
+    if (job.quick) args.push('--quick');
     const p = spawn(process.execPath, args, {
       cwd: ROOT, windowsHide: true,
       env: { ...process.env, LIBRARY, FFMPEG, FFPROBE },
@@ -157,7 +158,13 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
           try {
             const ev = JSON.parse(line.slice(2));
             if (ev.done) job.resultId = ev.id;
-            else job.progress = ev;
+            else if (ev.ready) {
+              // A version is finished: the movie is watchable now (backups may still be coming).
+              const first = !job.ready;
+              job.ready = true;
+              libraryChanged();
+              pushJobs(first);
+            } else job.progress = ev;
             pushJobs();
           } catch { /* ignore */ }
         } else if (line) {
@@ -324,7 +331,7 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
           return json(res, 400, { error: 'That file isn\'t a movie I can read.' });
         }
         const title = String(body.title || '').trim().slice(0, 120) || cleanTitle(file);
-        const job = enqueue({ file, title, denoise: body.denoise, skipAvc: body.skipAvc });
+        const job = enqueue({ file, title, denoise: body.denoise, skipAvc: body.skipAvc, quick: body.quick !== false });
         return json(res, 200, { id: job.id });
       }
       if (pathname === '/api/host/cancel') return json(res, cancel(Number(body.id)) ? 200 : 404, {});
