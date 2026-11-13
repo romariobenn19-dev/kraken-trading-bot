@@ -21,6 +21,9 @@ const store = {
 };
 if (params.get('role')) store.set('mn_role', params.get('role'));
 const role = store.get('mn_role') === 'host' ? 'host' : 'guest';
+// A random id per device, so the laptop knows which devices can play HEVC.
+let deviceId = store.get('mn_device');
+if (!deviceId) { deviceId = Math.random().toString(36).slice(2, 14).padEnd(12, '0'); store.set('mn_device', deviceId); }
 // The server already stored the key in a cookie; keep it out of the address bar.
 if (params.has('key')) {
   params.delete('key');
@@ -40,6 +43,7 @@ let clockOffset = 0;       // serverTime - localTime
 let clockSamples = [];
 let wakeLock = null;
 let openId = null;          // movie currently open (or opening)
+let playerError = null;     // e.g. 'needs-hevc' when this browser can't play the movie
 let isHost = false;         // true on the laptop running Movie Night
 let appVersion = null;
 
@@ -70,7 +74,7 @@ function connect() {
   ws.onopen = () => {
     retry = 0;
     $('netBanner').classList.add('hidden');
-    send({ t: 'hello', name: store.get('mn_name'), role });
+    hevcSupport.then((hevc) => send({ t: 'hello', name: store.get('mn_name'), role, deviceId, hevc }));
     clockSamples = [];
     for (let i = 0; i < 6; i++) setTimeout(ping, i * 300);
   };
@@ -191,11 +195,16 @@ async function openMovie(id) {
   }
 
   const base = `/library/${encodeURIComponent(mv.id)}/`;
-  const useHevc = mv.hevc && await canPlayHevc();
+  setPlayerError(null);
+  mediaErrors = 0;
+  const useHevc = mv.hevc && await hevcSupport;
+  if (!useHevc && !mv.avc) { setPlayerError('needs-hevc'); showChrome(); return; }
   if (id !== openId) return;
   const src = base + (useHevc ? mv.hevc : mv.avc || mv.hevc);
   const startPosition = state ? expectedPos() : 0;
 
+  $('quality').classList.add('hidden');
+  updateTime();
   if (window.Hls && Hls.isSupported()) {
     hls = new Hls({
       // Deep buffer: keep up to ~2 minutes ahead so short Wi-Fi dips never show.
@@ -225,8 +234,12 @@ async function openMovie(id) {
     hls.on(Hls.Events.LEVEL_SWITCHED, () => updateQualityLabel());
     hls.on(Hls.Events.ERROR, (_e, data) => {
       if (!data.fatal) return;
+      if (data.details === Hls.ErrorDetails.MANIFEST_INCOMPATIBLE_CODECS_ERROR) { setPlayerError('needs-hevc'); return; }
       if (data.type === Hls.ErrorTypes.NETWORK_ERROR) setTimeout(() => hls && hls.startLoad(), 2000);
-      else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+      else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+        mediaErrors++;
+        if (mediaErrors > 3) setPlayerError('playback'); else hls.recoverMediaError();
+      } else setPlayerError('playback');
     });
     hls.loadSource(src);
     hls.attachMedia(video);
@@ -271,13 +284,15 @@ async function setupQuality() {
           video: { contentType: `video/mp4; codecs="${lv.videoCodec}"`, width: lv.width, height: lv.height,
             bitrate: lv.bitrate, framerate: lv.frameRate || (meta && meta.fps) || 24 },
         });
-        ok = r.supported && r.smooth;
+        // Only 'supported' is reliable; many phones wrongly report smooth=false.
+        ok = r.supported;
       } catch { /* assume ok */ }
     }
     if (ok || i === 0) maxOk = i;
   }
   if (!hls) return;
   hls.autoLevelCapping = maxOk;
+  $('quality').classList.toggle('hidden', maxOk < 1);
   qualityLevels = levels.slice(0, maxOk + 1).map((lv, index) => ({ index, label: labelFor(lv) })).reverse();
   const sel = $('quality');
   sel.innerHTML = '';
@@ -373,14 +388,15 @@ function maybeUpgradeBuffered() {
 }
 
 function reportStatus() {
-  if (!meta) { send({ t: 'status', movieId: null }); return; }
+  const visible = document.visibilityState !== 'hidden';
+  if (!meta) { send({ t: 'status', movieId: null, visible }); return; }
   maybeUpgradeBuffered();
   // During a quality upgrade the buffer is briefly short on purpose; real stalls still report via 'waiting'.
   const ahead = Date.now() < upgradeGraceUntil ? Math.max(bufferAhead(), 5) : bufferAhead();
   const dur = video.duration || meta.duration || 0;
   const lv = hls && hls.levels[hls.currentLevel];
   send({
-    t: 'status', movieId: meta.id, ct: video.currentTime, buffer: ahead,
+    t: 'status', movieId: meta.id, ct: video.currentTime, buffer: ahead, visible, error: playerError,
     full: dur > 0 && video.currentTime + ahead >= dur - 1,
     stalled, quality: lv ? labelFor(lv).split(' · ')[0] : '',
     codec: lv && lv.videoCodec ? (/^(hvc1|hev1)/.test(lv.videoCodec) ? 'hevc' : 'avc') : '', bw: hls ? Math.round(hls.bandwidthEstimate || 0) : 0,
@@ -392,6 +408,8 @@ video.addEventListener('waiting', () => {
 });
 video.addEventListener('playing', () => { stalled = false; });
 video.addEventListener('timeupdate', updateTime);
+video.addEventListener('loadedmetadata', updateTime);
+video.addEventListener('progress', paintSeek);
 video.addEventListener('ended', () => send({ t: 'pause', pos: video.duration || expectedPos() }));
 
 // ---- Controls --------------------------------------------------------------------
@@ -423,9 +441,20 @@ function updateTime() {
   const d = duration();
   $('time').textContent = `${fmt(video.currentTime)} / ${fmt(d)}`;
   $('seek').value = d ? String(Math.round((video.currentTime / d) * 1000)) : '0';
+  paintSeek();
+}
+/** Seek bar shows what's played and how much is already loaded. */
+function paintSeek() {
+  const d = duration();
+  const played = d ? (Number($('seek').value) / 10) : 0;
+  const loaded = d ? Math.min(100, ((video.currentTime + bufferAhead()) / d) * 100) : 0;
+  $('seek').style.setProperty('--played', `${played}%`);
+  $('seek').style.setProperty('--loaded', `${Math.max(played, loaded)}%`);
 }
 function updatePlayButton() {
-  $('playBtn').textContent = state && state.wantPlay ? '❚❚' : '▶';
+  const playing = !!(state && state.wantPlay);
+  $('playBtn').innerHTML = playing ? ICONS.pause : ICONS.play;
+  $('playBtn').setAttribute('aria-label', playing ? 'Pause' : 'Play');
 }
 
 $('subsBtn').onclick = () => setSubs(!$('subsBtn').classList.contains('on'));
@@ -436,6 +465,9 @@ function setSubs(on) {
   store.set('mn_subs', on ? 'on' : 'off');
 }
 
+document.addEventListener('fullscreenchange', () => {
+  $('fsBtn').innerHTML = document.fullscreenElement ? ICONS.exitFs : ICONS.fs;
+});
 $('fsBtn').onclick = async () => {
   if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; }
   try {
@@ -505,8 +537,11 @@ function renderPeers() {
     const parts = [escapeHtml(p.name)];
     if (meta && p.ready) {
       if (p.quality) parts.push(p.quality);
-      parts.push(p.full ? 'fully loaded' : `${Math.floor(p.buffer)}s ahead`);
-      if (p.bw) parts.push(`${(p.bw / 1e6).toFixed(1)} Mbps`);
+      if (!p.quality && !p.full) parts.push('loading…');
+      else {
+        parts.push(p.full ? 'fully loaded' : `${Math.floor(p.buffer)}s ahead`);
+        if (p.bw) parts.push(`${(p.bw / 1e6).toFixed(1)} Mbps`);
+      }
     }
     return `<span class="peer"><span class="avatar">${Art.head(avatarFor(p))}</span><span class="dot ${meta && p.ready ? health : ''}"></span>${parts.join(' · ')}</span>`;
   }).join('');
@@ -524,10 +559,21 @@ function renderHold() {
   $('holdText').textContent = state.hold.reason === 'buffering'
     ? `${who || 'Someone'}'s Wi-Fi had a hiccup, so we've paused together. ${pup} is fetching a bigger buffer (${need}s) so it doesn't happen again.`
     : `${pup} is fetching the movie…${who ? ` (waiting for ${who})` : ''}`;
-  $('holdBars').innerHTML = peers.filter((p) => p.ready).map((p) => {
+  $('holdBars').innerHTML = peers.map((p) => {
+    let note = '';
+    if (!p.ready) note = 'browsing the movie list';
+    else if (p.error === 'needs-hevc') note = 'this browser can\'t play the movie';
+    else if (p.error) note = 'playback problem';
+    else if (!p.visible) note = 'app not on screen';
+    else if (p.late) note = 'still loading, will catch up';
     const pct = p.full ? 100 : Math.min(100, (p.buffer / need) * 100);
-    return `<div>${escapeHtml(p.name)} ${p.quality ? `· ${p.quality}` : ''}<div class="meter"><i style="width:${pct}%"></i></div></div>`;
+    return `<div class="hold-peer"><span class="avatar">${Art.head(avatarFor(p))}</span><div class="hold-peer-main">
+      <div class="hold-peer-top"><b>${escapeHtml(p.name)}</b><span class="muted">${note ? escapeHtml(note) : p.quality || ''}</span></div>
+      ${note ? '' : `<div class="meter"><i style="width:${pct.toFixed(0)}%"></i></div>`}</div></div>`;
   }).join('');
+  const waitingOnOthers = (state.hold.who || []).some((n) => n !== store.get('mn_name'));
+  $('forceStart').classList.toggle('hidden', !waitingOnOthers);
+  $('forceStart').textContent = state.hold.reason === 'starting' ? 'Start without waiting' : 'Carry on without waiting';
 }
 
 // ---- Misc ------------------------------------------------------------------------
@@ -711,9 +757,12 @@ function pickFile(e) {
   $('optQuick').checked = true;
   const confirmed = hostInfo && hostInfo.hevcConfirmed;
   $('optSkipAvc').checked = !!confirmed;
+  const cannot = (hostInfo && hostInfo.cannotPlayHevc) || [];
   $('skipHint').textContent = confirmed
-    ? 'Her tablet already played an HEVC movie smoothly, so the H.264 backups aren\'t needed.'
-    : 'Leave this off until her tablet has played a movie in HEVC. The app will remember once it has.';
+    ? 'Every device you two use can play HEVC, so the H.264 backups aren\'t needed.'
+    : cannot.length
+      ? `Keep the backups: ${cannot.join(', ')} can't play HEVC. (On the laptop, Chrome can.)`
+      : 'Keep the backups until her tablet has opened Movie Night. The app checks each device and ticks this for you.';
   $('titleInput').focus();
 }
 
@@ -774,6 +823,7 @@ function drawArt() {
   $('joinArt').innerHTML = Art.couple();
   $('emptyArt').innerHTML = Art.couple('laugh');
   $('holdArt').innerHTML = Art.fetchingPup();
+  $('errorArt').innerHTML = Art.reaction('shock');
   const items = collageItems();
   // Join screen: a wall of polaroids.
   const wall = [];
@@ -799,7 +849,7 @@ async function loadPersonal() {
   }
   if (personalInfo.nights) bits.push(`Movie night <b>#${personalInfo.nights}</b>`);
   if (personalInfo.dog) bits.push(`<b>${escapeHtml(personalInfo.dog)}</b> approved 🐾`);
-  $('tidbits').innerHTML = bits.join(' · ');
+  $('tidbits').innerHTML = bits.map((b) => `<span>${b}</span>`).join(' · ');
   $('tidbits').classList.toggle('hidden', !bits.length);
   drawArt();
 }
@@ -840,3 +890,42 @@ function avatarFor(p) {
   if (personalInfo.him && n === personalInfo.him.toLowerCase()) return 'him';
   return p.role === 'host' ? 'him' : 'her';
 }
+
+// ---- Playback problems on this device ------------------------------------------
+let mediaErrors = 0;
+const hevcSupport = canPlayHevc();
+
+function setPlayerError(kind) {
+  playerError = kind;
+  const box = $('playError');
+  if (!kind) { box.classList.add('hidden'); return; }
+  const chrome = /Edg\//.test(navigator.userAgent) ? 'Microsoft Edge can\'t play this movie\'s format (HEVC) unless the "HEVC Video Extensions" app is installed. '
+    : 'This browser can\'t play this movie\'s format (HEVC). ';
+  $('playErrorText').textContent = kind === 'needs-hevc'
+    ? `${chrome}Open Movie Night in Google Chrome instead, or re-add the movie with "Skip H.264 backups" unticked.`
+    : 'Something went wrong playing this movie on this device. Try going back to Movies and opening it again.';
+  box.classList.remove('hidden');
+  reportStatus();
+}
+
+$('forceStart').onclick = () => send({ t: 'force' });
+document.addEventListener('visibilitychange', () => reportStatus());
+
+// ---- Icons --------------------------------------------------------------------
+const svgIcon = (d, extra = '') => `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ${extra}>${d}</svg>`;
+const ICONS = {
+  play: svgIcon('<path d="M7 4.5v15l12-7.5z" fill="currentColor" stroke="none"/>'),
+  pause: svgIcon('<rect x="6" y="4.5" width="4" height="15" rx="1.2" fill="currentColor" stroke="none"/><rect x="14" y="4.5" width="4" height="15" rx="1.2" fill="currentColor" stroke="none"/>'),
+  back10: svgIcon('<path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4.5h4.5"/><text x="12" y="15.6" font-size="7.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="system-ui,sans-serif" font-weight="700">10</text>'),
+  fwd10: svgIcon('<path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v4.5h-4.5"/><text x="12" y="15.6" font-size="7.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="system-ui,sans-serif" font-weight="700">10</text>'),
+  fs: svgIcon('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>'),
+  exitFs: svgIcon('<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>'),
+  cc: svgIcon('<rect x="3" y="5.5" width="18" height="13" rx="3"/><path d="M10.5 10.2a2.5 2.5 0 1 0 0 3.6M17 10.2a2.5 2.5 0 1 0 0 3.6"/>'),
+  back: svgIcon('<path d="M15 5l-7 7 7 7"/>'),
+};
+$('back10').innerHTML = ICONS.back10; $('back10').setAttribute('aria-label', 'Back 10 seconds');
+$('fwd10').innerHTML = ICONS.fwd10; $('fwd10').setAttribute('aria-label', 'Forward 10 seconds');
+$('fsBtn').innerHTML = ICONS.fs; $('fsBtn').setAttribute('aria-label', 'Full screen');
+$('subsBtn').innerHTML = ICONS.cc; $('subsBtn').setAttribute('aria-label', 'Subtitles');
+$('backBtn').innerHTML = `${ICONS.back}<span>Movies</span>`;
+updatePlayButton();

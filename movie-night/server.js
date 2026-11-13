@@ -50,6 +50,8 @@ fs.mkdirSync(LIBRARY, { recursive: true });
 const LOW_BUFFER = 1.5;                         // seconds left before we call it a stall
 const RESUME_STEPS = [20, 40, 60, 90, 120];     // buffer needed to (re)start; grows after repeated stalls
 const START_BUFFER = 15;
+const START_TIMEOUT = 20000;   // after this, start without anyone still at the very beginning of loading
+const LATE_READY = 10;          // a late joiner counts again once this many seconds are loaded
 
 // ---- HTTP -------------------------------------------------------------------
 const MIME = {
@@ -226,6 +228,7 @@ function peers() {
   return [...clients.values()].map((c) => ({
     id: c.id, name: c.name, role: c.role, buffer: c.buffer, full: c.full, stalled: c.stalled,
     quality: c.quality, bw: c.bw, ready: c.movieId === room.movieId,
+    visible: c.visible !== false, error: c.error || null, late: !!c.late, hevc: c.hevc,
   }));
 }
 
@@ -242,6 +245,16 @@ function changed() {
 }
 
 /** Is this viewer buffered enough (relative to the shared position) to play? */
+/** Is this viewer actually in the movie right now (player working, app on screen, still talking to us)? */
+function participating(c) {
+  return c.movieId === room.movieId && c.visible !== false && !c.error && Date.now() - (c.seenAt || 0) < 6000;
+}
+
+/** Start/continue without anyone who's still waiting; they'll catch up and join in. */
+function leaveBehind(list) {
+  for (const c of list) c.late = true;
+}
+
 function hasBuffer(c, need) {
   if (c.movieId !== room.movieId) return false;
   if (Math.abs(c.ct - room.pos) > 3) return false; // hasn't caught up with the latest seek yet
@@ -252,16 +265,22 @@ function evaluate() {
   if (!room.movieId || !room.wantPlay || clients.size === 0) return;
   const list = [...clients.values()];
   if (!room.paused) {
-    const struggling = list.filter((c) => c.movieId === room.movieId && !c.full && (c.stalled || c.buffer < LOW_BUFFER));
+    const struggling = list.filter((c) => participating(c) && !c.late && !c.full && (c.stalled || c.buffer < LOW_BUFFER));
     if (struggling.length) {
       room.stalls++;
       setPosition(nowPos(), true);
-      room.hold = { reason: 'buffering', who: struggling.map((c) => c.name) };
+      room.hold = { reason: 'buffering', who: struggling.map((c) => c.name), since: Date.now() };
       changed();
     }
   } else if (room.hold) {
     const need = room.hold.reason === 'starting' ? START_BUFFER : resumeTarget();
-    const waitingFor = list.filter((c) => !hasBuffer(c, need)).map((c) => c.name);
+    let waiting = list.filter((c) => participating(c) && !c.late && !hasBuffer(c, need));
+    // Don't let one slow starter hold everyone up: after a while, start with whoever is ready.
+    if (waiting.length && room.hold.reason === 'starting' && Date.now() - room.hold.since > START_TIMEOUT) {
+      const ready = list.filter((c) => participating(c) && !c.late && hasBuffer(c, need));
+      if (ready.length) { leaveBehind(waiting); waiting = []; }
+    }
+    const waitingFor = waiting.map((c) => c.name);
     if (!waitingFor.length) {
       room.hold = null;
       setPosition(room.pos, false);
@@ -279,6 +298,8 @@ function handle(ws, c, msg) {
     case 'hello':
       c.name = String(msg.name || c.name).slice(0, 30);
       c.role = c.isHost || msg.role === 'host' ? 'host' : 'guest';
+      c.hevc = typeof msg.hevc === 'boolean' ? msg.hevc : null;
+      rememberDevice(c, msg.deviceId);
       send(ws, publicState());
       break;
     case 'ping':
@@ -293,12 +314,23 @@ function handle(ws, c, msg) {
       break;
     case 'play':
       if (!room.movieId) return;
+      for (const other of clients.values()) other.late = false;
       room.wantPlay = true;
       setPosition(Number.isFinite(msg.pos) ? msg.pos : room.pos, true);
-      room.hold = { reason: 'starting', who: [] };
+      room.hold = { reason: 'starting', who: [], since: Date.now() };
       changed();
       evaluate();
       break;
+    case 'force': {
+      // "Start without them": go now; anyone still loading catches up on their own.
+      if (!room.hold) return;
+      leaveBehind([...clients.values()].filter((o) => !hasBuffer(o, 2)));
+      room.hold = null;
+      setPosition(room.pos, false);
+      countMovieNight();
+      changed();
+      break;
+    }
     case 'pause':
       room.wantPlay = false; room.hold = null;
       setPosition(Number.isFinite(msg.pos) ? msg.pos : nowPos(), true);
@@ -306,8 +338,9 @@ function handle(ws, c, msg) {
       break;
     case 'seek':
       if (!Number.isFinite(msg.pos)) return;
+      for (const other of clients.values()) other.late = false;
       setPosition(msg.pos, true);
-      room.hold = room.wantPlay ? { reason: 'starting', who: [] } : null;
+      room.hold = room.wantPlay ? { reason: 'starting', who: [], since: Date.now() } : null;
       changed();
       evaluate();
       break;
@@ -319,6 +352,10 @@ function handle(ws, c, msg) {
       c.movieId = msg.movieId || null;
       c.quality = String(msg.quality || '').slice(0, 40);
       c.bw = Number(msg.bw) || 0;
+      c.visible = msg.visible !== false;
+      c.error = msg.error ? String(msg.error).slice(0, 40) : null;
+      c.seenAt = Date.now();
+      if (c.late && (c.full || c.buffer >= LATE_READY) && Math.abs(c.ct - nowPos()) < 3) c.late = false;
       host.onStatus(c, msg);
       evaluate();
       break;
@@ -356,6 +393,20 @@ wss.on('connection', (ws, req) => {
     evaluate();
   });
 });
+
+/** Remember which devices you two use and whether each can play HEVC (decides if H.264 backups are needed). */
+function rememberDevice(c, deviceId) {
+  if (typeof deviceId !== 'string' || !/^[a-z0-9]{8,32}$/.test(deviceId) || typeof c.hevc !== 'boolean') return;
+  const devices = config.devices || (config.devices = {});
+  const today = new Date().toISOString().slice(0, 10);
+  const d = devices[deviceId];
+  if (d && d.hevc === c.hevc && d.name === c.name && d.lastSeen === today) return;
+  devices[deviceId] = { name: c.name, hevc: c.hevc, host: !!c.isHost, lastSeen: today };
+  saveConfig();
+}
+
+// Re-check holds every second (for the start timeout), even if nobody sends anything.
+setInterval(evaluate, 1000);
 
 // Share everyone's connection health once a second, and drop dead sockets.
 setInterval(() => broadcast({ t: 'peers', peers: peers() }), 1000);
@@ -434,7 +485,14 @@ function links() {
 function openBrowser(url) {
   const opts = { detached: true, stdio: 'ignore', windowsHide: true };
   try {
-    if (process.platform === 'win32') spawn('rundll32', ['url.dll,FileProtocolHandler', url], opts).unref();
+    if (process.platform === 'win32') {
+      // Prefer Chrome: it plays HEVC on NVIDIA/Intel/AMD graphics out of the box (Edge needs an extra extension).
+      const chrome = ['ProgramFiles', 'ProgramFiles(x86)', 'LOCALAPPDATA']
+        .map((v) => process.env[v] && path.join(process.env[v], 'Google', 'Chrome', 'Application', 'chrome.exe'))
+        .find((p) => p && fs.existsSync(p));
+      if (chrome) spawn(chrome, [url], opts).unref();
+      else spawn('rundll32', ['url.dll,FileProtocolHandler', url], opts).unref();
+    }
     else if (process.platform === 'darwin') spawn('open', [url], opts).unref();
     else spawn('xdg-open', [url], opts).on('error', () => {}).unref();
   } catch { /* no browser available */ }

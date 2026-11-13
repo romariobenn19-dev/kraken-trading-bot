@@ -309,7 +309,7 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     try {
       if (req.method === 'GET' && pathname === '/api/host/info') {
         return json(res, 200, {
-          version: version(), links: links(), hevcConfirmed: !!config.hevcConfirmed,
+          version: version(), links: links(), ...hevcDevices(),
           ffmpegFound: !spawnSync(FFMPEG, ['-version'], { windowsHide: true }).error,
           freeGb: freeSpaceGb(LIBRARY),
         });
@@ -365,14 +365,19 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     } catch { return null; }
   }
 
-  /** Remember once her device has played HEVC smoothly, so H.264 backups can be skipped by default. */
-  function onStatus(client, msg) {
-    if (config.hevcConfirmed || client.isHost) return;
-    if (msg.codec === 'hevc' && !msg.stalled && Number(msg.ct) > 20) {
-      config.hevcConfirmed = true;
-      saveConfig();
-    }
+  /**
+   * H.264 backups can be skipped only if every device you've used lately (her tablet,
+   * your phone, the laptop's browser...) can play HEVC, including at least one that isn't the laptop.
+   */
+  function hevcDevices() {
+    const cutoff = Date.now() - 60 * 86400000;
+    const recent = Object.values(config.devices || {}).filter((d) => new Date(d.lastSeen).getTime() >= cutoff);
+    const cannot = recent.filter((d) => !d.hevc).map((d) => (d.host ? `${d.name} (this laptop's browser)` : d.name));
+    const hevcConfirmed = recent.some((d) => !d.host) && cannot.length === 0;
+    return { hevcConfirmed, cannotPlayHevc: [...new Set(cannot)] };
   }
+
+  function onStatus() { /* device capabilities are recorded at hello */ }
 
   /** On startup: if any app file is missing (e.g. an interrupted update), fetch it from GitHub. */
   async function repairMissing() {

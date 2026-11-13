@@ -34,6 +34,10 @@ If Windows says *"Windows protected your PC"*, click **More info**, then **Run a
 3. You: in Movie Night on your laptop, click **Copy** next to **Her link** and send it to her.
 4. Her: open the link in Chrome, type her name, and bookmark it (or add it to her home screen).
 
+## Which browser?
+
+Use **Google Chrome** on the laptop and on her tablet. Chrome plays the HEVC versions out of the box on modern graphics. Microsoft Edge can't, unless the "HEVC Video Extensions" app is installed. The desktop icon opens Chrome automatically when it's installed. If a device can't play a movie, it says so on screen instead of waiting forever.
+
 ## Every movie night
 
 1. You: click the **Movie Night** icon on your desktop (it's usually already running).
@@ -46,7 +50,7 @@ In Movie Night on your laptop, click **＋ Add movie**:
 - Pick a place (Downloads, Videos…), then the movie file.
 - Check the title. It's tidied automatically, e.g. "Resident.Evil.2026.REPACK.1080p…" becomes "Resident Evil (2026)".
 - Optional: **Clean up film grain**, for older or grainy films, so they look sharper.
-- Optional: **Skip H.264 backups**, about a third faster. The app ticks this for you once her tablet has played an HEVC movie smoothly.
+- Optional: **Skip H.264 backups**, about a third faster. The app checks every device you two use (her tablet, your phone, the laptop's browser) and ticks this for you only when all of them can play HEVC.
 - **Quick** (ticked by default): only makes the versions her tablet uses. Untick it if you also want 4K / 1440p versions.
 - Click **Prepare movie**. The version she watches is made first, and **the movie appears on both screens as soon as that's done**, roughly 10–15 minutes for a 1h30 film. The backup versions (used if her Wi-Fi dips) keep going in the background; the card says "finishing backups…" until they're done.
 
