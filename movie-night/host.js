@@ -252,7 +252,8 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
   const rawBase = () => `https://raw.githubusercontent.com/${src().repo}/${src().branch}/${src().path ? `${src().path}/` : ''}`;
 
   async function fetchText(url) {
-    const r = await fetch(url, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } });
+    // Unique query string so GitHub's 5-minute cache doesn't hand out an old copy right after a release.
+    const r = await fetch(`${url}?v=${Date.now()}`, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } });
     if (!r.ok) throw new Error(`${r.status} for ${url}`);
     return Buffer.from(await r.arrayBuffer());
   }
