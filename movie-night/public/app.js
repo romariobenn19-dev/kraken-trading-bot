@@ -51,6 +51,7 @@ function join() {
   showScreen('library');
   connect();
   refreshMovies();
+  loadPersonal();
 }
 
 // ---- Networking ---------------------------------------------------------------
@@ -73,6 +74,7 @@ function connect() {
     else if (m.t === 'welcome') onWelcome(m);
     else if (m.t === 'jobs') renderJobs(m.jobs);
     else if (m.t === 'library') refreshMovies();
+    else if (m.t === 'personal') loadPersonal();
     else if (m.t === 'restarting') { toast('Updating Movie Night… back in a few seconds'); appVersion = 'restarting'; }
   };
   ws.onclose = () => {
@@ -109,7 +111,8 @@ async function refreshMovies() {
     b.innerHTML = `<div class="poster"></div><div class="meta"><b></b><span></span></div>`;
     const poster = b.querySelector('.poster');
     if (mv.poster) poster.style.backgroundImage = `url("/library/${encodeURIComponent(mv.id)}/${mv.poster}")`;
-    else poster.textContent = '🎞️';
+    else poster.innerHTML = Art.scene(Art.SCENES[movies.indexOf(mv) % Art.SCENES.length]);
+    b.insertAdjacentHTML('beforeend', `<span class="card-bow">${Art.bowSvg()}</span>`);
     b.querySelector('b').textContent = mv.title;
     b.querySelector('span').textContent = `${fmt(mv.duration)} · up to ${best}${mv.subtitles ? ' · CC' : ''}`;
     b.onclick = () => send({ t: 'load', movieId: mv.id });
@@ -142,6 +145,7 @@ async function onState(s) {
   applyState();
   renderHold();
   updatePlayButton();
+  renderIntermission();
 }
 
 function closeMovie() {
@@ -430,19 +434,31 @@ $('fsBtn').onclick = async () => {
   } catch { /* not supported */ }
 };
 
-for (const b of document.querySelectorAll('.react')) {
-  b.onclick = (e) => { e.stopPropagation(); send({ t: 'react', emoji: b.dataset.e }); };
+// Reactions are little cartoon versions of us.
+const REACT_LABELS = { love: 'Heart eyes', laugh: 'Laughing', cry: 'Crying', shock: 'Shocked pup', kiss: 'Kiss' };
+for (const key of Art.REACTIONS) {
+  const b = document.createElement('button');
+  b.className = 'react';
+  b.title = REACT_LABELS[key] || key;
+  b.setAttribute('aria-label', b.title);
+  b.innerHTML = Art.reaction(key);
+  b.onclick = (e) => { e.stopPropagation(); send({ t: 'react', emoji: key }); };
+  $('reacts').appendChild(b);
 }
-function floatEmoji(emoji, from) {
+function floatEmoji(key, from) {
   const el = document.createElement('div');
   el.className = 'floater';
-  el.style.left = `${10 + Math.random() * 80}%`;
-  el.textContent = emoji;
+  el.style.left = `${8 + Math.random() * 76}%`;
+  const face = document.createElement('div');
+  face.className = 'face';
+  if (Art.REACTIONS.includes(key)) face.innerHTML = Art.reaction(key);
+  else { face.textContent = key; face.style.cssText = 'font-size:52px;display:grid;place-items:center'; }
+  el.appendChild(face);
   const s = document.createElement('small');
   s.textContent = from;
   el.appendChild(s);
   $('floaters').appendChild(el);
-  setTimeout(() => el.remove(), 2700);
+  setTimeout(() => el.remove(), 3100);
 }
 
 document.addEventListener('keydown', (e) => {
@@ -481,7 +497,7 @@ function renderPeers() {
       parts.push(p.full ? 'fully loaded' : `${Math.floor(p.buffer)}s ahead`);
       if (p.bw) parts.push(`${(p.bw / 1e6).toFixed(1)} Mbps`);
     }
-    return `<span class="peer"><span class="dot ${meta && p.ready ? health : ''}"></span>${parts.join(' · ')}</span>`;
+    return `<span class="peer"><span class="avatar">${Art.head(avatarFor(p))}</span><span class="dot ${meta && p.ready ? health : ''}"></span>${parts.join(' · ')}</span>`;
   }).join('');
   $('peersLib').innerHTML = html;
   $('peersPlayer').innerHTML = html;
@@ -493,9 +509,10 @@ function renderHold() {
   el.classList.remove('hidden');
   const need = state.hold.reason === 'starting' ? state.startBuffer : state.resumeTarget;
   const who = (state.hold.who || []).join(' & ');
+  const pup = personalInfo.dog || 'The pup';
   $('holdText').textContent = state.hold.reason === 'buffering'
-    ? `${who || 'Someone'}'s connection dipped, so we've paused together and are building a bigger buffer (${need}s) so it doesn't happen again.`
-    : who ? `Loading… waiting for ${who}` : 'Loading…';
+    ? `${who || 'Someone'}'s Wi-Fi had a hiccup, so we've paused together. ${pup} is fetching a bigger buffer (${need}s) so it doesn't happen again.`
+    : `${pup} is fetching the movie…${who ? ` (waiting for ${who})` : ''}`;
   $('holdBars').innerHTML = peers.filter((p) => p.ready).map((p) => {
     const pct = p.full ? 100 : Math.min(100, (p.buffer / need) * 100);
     return `<div>${escapeHtml(p.name)} ${p.quality ? `· ${p.quality}` : ''}<div class="meter"><i style="width:${pct}%"></i></div></div>`;
@@ -711,4 +728,101 @@ function toast(text, ms = 4000) {
   t.classList.remove('hidden');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.add('hidden'), ms);
+}
+
+// ---- Personal touches -----------------------------------------------------------
+let personalInfo = { him: '', her: '', dog: '', since: '', nights: 0, photos: [] };
+
+const CAPTIONS = { cinema: 'Popcorn date', space: 'Lost in space', horror: 'Scary movie night', heroes: 'Superhero duo', romance: 'Under the stars', pirates: 'Pirates of the sofa' };
+const TILTS = [-3, 2, -1.5, 3, -2.5, 1.5, -1, 2.5];
+
+function polaroid(inner, caption, i) {
+  const tilt = TILTS[i % TILTS.length];
+  return `<figure class="polaroid" style="--tilt:${tilt}deg;--delay:${-(i * 1.3)}s">
+    <span class="pin">${Art.bowSvg()}</span><div class="pic">${inner}</div><figcaption>${escapeHtml(caption)}</figcaption></figure>`;
+}
+
+function collageItems() {
+  const items = Art.SCENES.map((n) => ({ html: Art.scene(n), cap: CAPTIONS[n] || '' }));
+  // Mix in your real photos (from the private personal\photos folder on the laptop).
+  const photos = personalInfo.photos.map((src) => ({ html: `<img src="${src}" alt="" loading="lazy">`, cap: '♡' }));
+  const out = [];
+  const n = Math.max(items.length, photos.length);
+  for (let i = 0; i < n; i++) {
+    if (items[i]) out.push(items[i]);
+    if (photos[i]) out.push(photos[i]);
+  }
+  return out;
+}
+
+function drawArt() {
+  for (const el of document.querySelectorAll('.title-bow')) el.innerHTML = Art.bowSvg();
+  $('joinArt').innerHTML = Art.couple();
+  $('emptyArt').innerHTML = Art.couple('laugh');
+  $('holdArt').innerHTML = Art.fetchingPup();
+  const items = collageItems();
+  // Join screen: a wall of polaroids.
+  const wall = [];
+  for (let i = 0; i < 18; i++) wall.push(polaroid(items[i % items.length].html, items[i % items.length].cap, i));
+  $('joinCollage').innerHTML = wall.join('');
+  // Library: a slowly drifting strip (doubled so it loops seamlessly).
+  const strip = items.map((it, i) => polaroid(it.html, it.cap, i)).join('');
+  $('strip').innerHTML = strip + strip;
+}
+
+async function loadPersonal() {
+  try {
+    const r = await fetch('/api/personal', { cache: 'no-store' });
+    if (r.ok) personalInfo = await r.json();
+  } catch { /* offline */ }
+  const names = personalInfo.him && personalInfo.her ? `${personalInfo.him} & ${personalInfo.her}'s Movie Night` : 'Movie Night';
+  for (const el of document.querySelectorAll('.couple-title')) el.textContent = names;
+  document.title = names;
+  const bits = [];
+  if (personalInfo.since) {
+    const days = Math.floor((Date.now() - new Date(`${personalInfo.since}T00:00:00`)) / 86400000);
+    if (days >= 0) bits.push(`Together <b>${days.toLocaleString()} days</b>`);
+  }
+  if (personalInfo.nights) bits.push(`Movie night <b>#${personalInfo.nights}</b>`);
+  if (personalInfo.dog) bits.push(`<b>${escapeHtml(personalInfo.dog)}</b> approved 🐾`);
+  $('tidbits').innerHTML = bits.join(' · ');
+  $('tidbits').classList.toggle('hidden', !bits.length);
+  drawArt();
+}
+
+function renderIntermission() {
+  const show = !!(state && meta && state.paused && !state.wantPlay && !state.hold && video.currentTime > 5);
+  $('intermission').classList.toggle('hidden', !show);
+}
+
+// Personalize dialog (laptop only)
+$('personalBtn').onclick = () => {
+  $('pHim').value = personalInfo.him || store.get('mn_name') || '';
+  $('pHer').value = personalInfo.her || '';
+  $('pDog').value = personalInfo.dog || '';
+  $('pSince').value = personalInfo.since || '';
+  $('settings').classList.remove('hidden');
+  $('pHer').focus();
+};
+$('settingsClose').onclick = () => $('settings').classList.add('hidden');
+$('settings').addEventListener('click', (e) => { if (e.target === $('settings')) $('settings').classList.add('hidden'); });
+$('savePersonal').onclick = async () => {
+  try {
+    await api('/api/host/personal', { him: $('pHim').value, her: $('pHer').value, dog: $('pDog').value, since: $('pSince').value });
+    $('settings').classList.add('hidden');
+    toast('Saved 🎀');
+  } catch (e) { toast(e.message); }
+};
+$('openPhotos').onclick = async () => {
+  try { await api('/api/host/open-photos', {}); toast('Drop photos in that folder, then refresh this page.', 6000); } catch (e) { toast(e.message); }
+};
+
+drawArt();
+
+/** Whose little face to show next to a name. */
+function avatarFor(p) {
+  const n = String(p.name || '').trim().toLowerCase();
+  if (personalInfo.her && n === personalInfo.her.toLowerCase()) return 'her';
+  if (personalInfo.him && n === personalInfo.him.toLowerCase()) return 'him';
+  return p.role === 'host' ? 'him' : 'her';
 }

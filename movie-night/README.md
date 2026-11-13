@@ -6,7 +6,10 @@ Watch movies together from different places. Your laptop does all the heavy work
 - **Sharpest picture her tablet can show.** Each movie is made in several qualities, up to 4K. Her Galaxy Tab A8 (1920×1200 screen) gets an extra-sharp 1080p HQ version sized for her ~7.75 Mbps.
 - **Wi-Fi dips don't show.** Up to two minutes is loaded ahead. If her connection really drops, both screens pause together and resume together.
 - **Either of you can play, pause or skip**, and it happens on both screens within a fraction of a second.
-- Subtitles, emoji reactions and full screen.
+- **Made for the two of you.** Beige and bows, with cartoon versions of you two and the pup acting out movie scenes, your own faces as reactions, and the pup fetching the movie while it loads.
+- **🎀 Personalize** (on the laptop): your names, the pup's name and the day you got together. The app shows "Together X days" and counts your movie nights.
+- **Your photos as polaroids:** in Personalize, click **Open photos folder** and drop pictures in. They stay on your laptop and are never uploaded to GitHub or anywhere else.
+- Subtitles and full screen.
 
 ---
 

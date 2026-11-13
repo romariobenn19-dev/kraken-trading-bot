@@ -19,7 +19,7 @@ const VIDEO_EXT = new Set(['.mp4', '.mkv', '.avi', '.mov', '.m4v', '.wmv', '.web
 const APP_FILES = [
   'server.js', 'host.js', 'prepare.js', 'package.json', 'README.md',
   'launch.vbs', 'setup.bat', 'setup-helper.ps1', 'start-movie-night.bat', 'prepare-movie.bat',
-  'public/index.html', 'public/app.js', 'public/style.css', 'public/icon.png', 'public/icon.ico',
+  'public/index.html', 'public/app.js', 'public/art.js', 'public/style.css', 'public/icon.png', 'public/icon.ico',
 ];
 
 /** "Resident.Evil.2026.REPACK.1080p.AMZN.WEB-DL" -> "Resident Evil (2026)" */
@@ -86,7 +86,7 @@ function json(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
-module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendToHosts, libraryChanged, links, onMovieDeleted, restart }) {
+module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendToHosts, libraryChanged, links, onMovieDeleted, restart, savePersonal, openPhotosFolder }) {
   const FFMPEG = findTool('ffmpeg');
   const FFPROBE = findTool('ffprobe');
   const version = () => JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
@@ -334,6 +334,8 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
         return json(res, 200, {});
       }
       if (pathname === '/api/host/update') return json(res, 200, await applyUpdate());
+      if (pathname === '/api/host/personal') { savePersonal(body); return json(res, 200, {}); }
+      if (pathname === '/api/host/open-photos') return json(res, 200, { folder: openPhotosFolder() });
       return json(res, 404, { error: 'Not found' });
     } catch (e) {
       return json(res, 500, { error: e.message });

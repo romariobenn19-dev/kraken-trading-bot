@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0d0b14">
+  <meta name="theme-color" content="#f3e9da">
   <meta name="mobile-web-app-capable" content="yes">
   <title>Movie Night</title>
   <link rel="icon" href="/icon.png">
@@ -12,9 +12,10 @@
 <body>
   <!-- Join -->
   <section id="join" class="screen">
+    <div class="collage" id="joinCollage" aria-hidden="true"></div>
     <div class="join-card">
-      <div class="logo">🎬</div>
-      <h1>Movie Night</h1>
+      <div id="joinArt" class="join-art"></div>
+      <h1><span class="title-bow"></span><span class="couple-title">Movie Night</span></h1>
       <p class="muted">Together, wherever you are.</p>
       <label for="name">Your name</label>
       <input id="name" maxlength="30" autocomplete="nickname" placeholder="e.g. Maria">
@@ -25,9 +26,12 @@
   <!-- Library -->
   <section id="library" class="screen hidden">
     <header class="bar">
-      <h2>🎬 Movie Night</h2>
+      <h2><span class="title-bow"></span><span class="couple-title">Movie Night</span></h2>
       <div id="peersLib" class="peers"></div>
     </header>
+
+    <div class="strip" aria-hidden="true"><div class="strip-track" id="strip"></div></div>
+    <p id="tidbits" class="tidbits"></p>
 
     <!-- Only shown on the host laptop -->
     <div id="hostBar" class="host-bar hidden">
@@ -37,13 +41,17 @@
         <code id="herLink">…</code>
         <button id="copyLink" class="ghost small">Copy</button>
       </div>
+      <button id="personalBtn" class="ghost small">🎀 Personalize</button>
       <button id="updateBtn" class="ghost small">Check for updates</button>
     </div>
     <div id="jobs" class="jobs"></div>
 
-    <p class="muted pad">Pick a movie. It opens on both screens.</p>
+    <h3 class="section-title pad">Our movies</h3>
     <div id="movies" class="grid"></div>
-    <p id="noMovies" class="muted pad hidden">No movies yet.</p>
+    <div id="noMovies" class="empty hidden">
+      <div id="emptyArt" class="empty-art"></div>
+      <p class="muted">No movies yet. Add one on the laptop and it'll appear here for both of you.</p>
+    </div>
   </section>
 
   <!-- Player -->
@@ -51,8 +59,10 @@
     <div id="stage">
       <video id="video" playsinline preload="auto"></video>
 
+      <div id="intermission" class="intermission hidden"><span class="title-bow"></span>Intermission</div>
+
       <div id="hold" class="hold hidden">
-        <div class="spinner"></div>
+        <div id="holdArt" class="hold-art"></div>
         <div id="holdText">Getting ready…</div>
         <div id="holdBars" class="hold-bars"></div>
       </div>
@@ -75,12 +85,7 @@
             <button id="fwd10" class="icon" title="Forward 10s">10⟳</button>
             <span id="time" class="time">0:00 / 0:00</span>
             <span class="spacer"></span>
-            <span class="reacts">
-              <button class="react" data-e="❤️">❤️</button>
-              <button class="react" data-e="😂">😂</button>
-              <button class="react" data-e="😮">😮</button>
-              <button class="react" data-e="😭">😭</button>
-            </span>
+            <span class="reacts" id="reacts"></span>
             <button id="subsBtn" class="icon hidden" title="Subtitles">CC</button>
             <select id="quality" title="Quality"></select>
             <button id="fsBtn" class="icon" title="Full screen">⛶</button>
@@ -121,9 +126,36 @@
     </div>
   </div>
 
+  <!-- Personalize (host only) -->
+  <div id="settings" class="modal hidden" role="dialog" aria-modal="true" aria-label="Personalize">
+    <div class="sheet">
+      <header class="sheet-head">
+        <b>🎀 Personalize</b>
+        <button id="settingsClose" class="ghost small" aria-label="Close">✕</button>
+      </header>
+      <div class="confirm">
+        <div class="two">
+          <div><label for="pHim">Your name</label><input id="pHim" maxlength="30"></div>
+          <div><label for="pHer">Her name</label><input id="pHer" maxlength="30"></div>
+        </div>
+        <div class="two">
+          <div><label for="pDog">Your pup's name</label><input id="pDog" maxlength="30"></div>
+          <div><label for="pSince">Together since</label><input id="pSince" type="date"></div>
+        </div>
+        <p class="muted small">Your photos: drop pictures into the <b>personal\photos</b> folder in Movie Night and they appear as polaroids for both of you. They stay on this laptop and are never uploaded anywhere.</p>
+        <div class="row">
+          <button id="openPhotos" class="ghost">📷 Open photos folder</button>
+          <span class="spacer"></span>
+          <button id="savePersonal" class="primary">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast hidden"></div>
 
   <script src="/vendor/hls.min.js"></script>
+  <script src="/art.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

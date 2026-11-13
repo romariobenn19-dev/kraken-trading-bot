@@ -27,6 +27,8 @@ const ROOT = __dirname;
 const PUBLIC = path.join(ROOT, 'public');
 const LIBRARY = process.env.LIBRARY || path.join(ROOT, 'library');
 const CONFIG_FILE = path.join(ROOT, 'config.json');
+const PHOTOS = path.join(ROOT, 'personal', 'photos'); // private: never uploaded, never in git
+const PHOTO_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
 const PORT = Number(process.env.PORT || 8080);
 const ARGS = new Set(process.argv.slice(2));
 
@@ -54,7 +56,7 @@ const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.m3u8': 'application/vnd.apple.mpegurl', '.m4s': 'video/iso.segment',
   '.mp4': 'video/mp4', '.vtt': 'text/vtt; charset=utf-8', '.jpg': 'image/jpeg', '.png': 'image/png',
-  '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json',
+  '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.webmanifest': 'application/manifest+json',
 };
 
 function parseCookies(header) {
@@ -149,6 +151,17 @@ const server = http.createServer((req, res) => {
     const origin = req.headers.origin;
     if (origin && new URL(origin).host !== req.headers.host) { res.writeHead(403); res.end(); return; }
     host.handle(req, res, pathname, url);
+    return;
+  }
+  if (pathname === '/api/personal') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(personal()));
+    return;
+  }
+  if (pathname.startsWith('/personal/photos/')) {
+    const file = within(PHOTOS, pathname.slice('/personal/photos/'.length));
+    if (!file || !PHOTO_EXT.has(path.extname(file).toLowerCase())) { res.writeHead(403); res.end(); return; }
+    sendFile(req, res, file, 'private, max-age=3600');
     return;
   }
   if (pathname === '/api/movies') {
@@ -252,6 +265,7 @@ function evaluate() {
     if (!waitingFor.length) {
       room.hold = null;
       setPosition(room.pos, false);
+      countMovieNight();
       changed();
     } else if (String(waitingFor) !== String(room.hold.who)) {
       room.hold.who = waitingFor;
@@ -366,6 +380,43 @@ function addresses() {
   return out;
 }
 
+// ---- Personal touches ---------------------------------------------------------------
+function personal() {
+  const p = config.personal || {};
+  let photos = [];
+  try {
+    photos = fs.readdirSync(PHOTOS).filter((f) => PHOTO_EXT.has(path.extname(f).toLowerCase()))
+      .sort().slice(0, 40).map((f) => `/personal/photos/${encodeURIComponent(f)}`);
+  } catch { /* no photos yet */ }
+  return { him: p.him || '', her: p.her || '', dog: p.dog || '', since: p.since || '', nights: p.nights || 0, photos };
+}
+
+function savePersonal(body) {
+  const p = config.personal || (config.personal = {});
+  for (const k of ['him', 'her', 'dog']) if (typeof body[k] === 'string') p[k] = body[k].trim().slice(0, 30);
+  if (typeof body.since === 'string' && /^(\d{4}-\d{2}-\d{2})?$/.test(body.since)) p.since = body.since;
+  saveConfig();
+  broadcast({ t: 'personal' });
+}
+
+/** Each movie you start together on a given day counts as one movie night. */
+function countMovieNight() {
+  const p = config.personal || (config.personal = {});
+  const key = `${new Date().toISOString().slice(0, 10)}|${room.movieId}`;
+  if (p.lastNight === key) return;
+  p.lastNight = key;
+  p.nights = (p.nights || 0) + 1;
+  saveConfig();
+  broadcast({ t: 'personal' });
+}
+
+function openPhotosFolder() {
+  fs.mkdirSync(PHOTOS, { recursive: true });
+  const opener = process.platform === 'win32' ? 'explorer' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+  try { spawn(opener, [PHOTOS], { detached: true, stdio: 'ignore' }).on('error', () => {}).unref(); } catch { /* headless */ }
+  return PHOTOS;
+}
+
 function appVersion() {
   try { return JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version; } catch { return '?'; }
 }
@@ -403,7 +454,7 @@ function restart() {
 }
 
 const host = createHost({
-  ROOT, LIBRARY, config, saveConfig, links, restart,
+  ROOT, LIBRARY, config, saveConfig, links, restart, savePersonal, openPhotosFolder,
   sendToHosts(msg) {
     const data = JSON.stringify(msg);
     for (const [ws, c] of clients) if (c.isHost && ws.readyState === ws.OPEN) ws.send(data);
