@@ -483,8 +483,12 @@ async function main() {
   // Step 1: the version you watch + the safety version, side by side, both watchable while
   // they convert. The movie is published once both have ~30 s ready.
   const firstBatch = jobs.slice(0, safety ? 2 : 1);
+  // Already watchable (e.g. an older movie just getting its safety version)? Then don't show
+  // anything half-made: the new version joins once it's complete.
+  const isDone = (j) => fs.existsSync(path.join(outDir, dirOf(j), '.done'));
+  const alreadyWatchable = firstBatch.some(isDone);
   const need = Math.max(1, Math.min(EARLY_SEGMENTS, Math.ceil(duration / SEGMENT_SECONDS) - 1));
-  let early = setInterval(() => {
+  let early = alreadyWatchable ? null : setInterval(() => {
     const ready = firstBatch.every((j) => {
       const dir = path.join(outDir, dirOf(j));
       return fs.existsSync(path.join(dir, '.done')) || (segsIn(dir) >= need && fs.existsSync(path.join(dir, 'init.mp4')));
@@ -499,7 +503,7 @@ async function main() {
     }
   }, 2000);
   try {
-    await Promise.all(firstBatch.map((j, i) => encode(j, { growing: true, quiet: i > 0 })));
+    await Promise.all(firstBatch.map((j, i) => encode(j, { growing: !alreadyWatchable, quiet: i > 0 })));
   } finally { if (early) clearInterval(early); }
   step.n = firstBatch.length;
   publish(firstBatch.length === jobs.length);

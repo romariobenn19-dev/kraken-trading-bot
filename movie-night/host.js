@@ -574,10 +574,11 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     for (const id of ids) {
       try {
         const meta = JSON.parse(fs.readFileSync(path.join(LIBRARY, id, 'meta.json'), 'utf8'));
-        if (meta.converting || jobs.some((j) => j.movieId === id && ['queued', 'running'].includes(j.status))) continue;
+        // (A movie still marked "converting" here was cut off by a restart: finish it too.)
+        if (jobs.some((j) => j.movieId === id && ['queued', 'running'].includes(j.status))) continue;
         const r = meta.renditions || [];
         const hasSafety = r.some((x) => x.height <= 400);
-        if (hasSafety && !meta.partial) continue;
+        if (hasSafety && !meta.partial && !meta.converting) continue;
         if (slugify(meta.title) !== id) continue;
         const { file } = JSON.parse(fs.readFileSync(path.join(LIBRARY, id, '.source.json'), 'utf8'));
         if (!file || !fs.existsSync(file)) continue;
