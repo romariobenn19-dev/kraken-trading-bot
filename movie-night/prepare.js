@@ -188,10 +188,10 @@ function videoCodecArgs(encName, codecFamily, kbps, gop) {
 
 function even(n) { return Math.max(2, Math.round(n / 2) * 2); }
 
-function runFfmpeg(args, durationSec, label) {
+function runFfmpeg(args, durationSec, label, cwd) {
   return new Promise((resolve, reject) => {
     const p = spawn(FFMPEG, ['-hide_banner', '-y', '-nostats', '-progress', 'pipe:1', ...args],
-      { stdio: ['ignore', 'pipe', 'pipe'] });
+      { stdio: ['ignore', 'pipe', 'pipe'], cwd });
     let errTail = '';
     let last = -1;
     const started = Date.now();
@@ -315,7 +315,7 @@ async function main() {
     const dir = path.join(outDir, dirName);
     const height = even((job.width * srcH) / srcW);
     const width = even(job.width);
-    if (fs.existsSync(path.join(dir, '.done'))) {
+    if (fs.existsSync(path.join(dir, '.done')) && fs.existsSync(path.join(dir, 'init.mp4'))) {
       console.log(`  ${(job.label + (job.tag ? ' HQ' : '') + ' ' + job.family.toUpperCase()).padEnd(14)} already done, skipping`);
     } else {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -334,10 +334,13 @@ async function main() {
         '-sn', '-dn', '-map_metadata', '-1', '-map_chapters', '-1',
         '-f', 'hls', '-hls_time', String(SEGMENT_SECONDS), '-hls_playlist_type', 'vod',
         '-hls_segment_type', 'fmp4', '-hls_fmp4_init_filename', 'init.mp4',
-        '-hls_segment_filename', path.join(dir, 'seg_%05d.m4s'),
-        path.join(dir, 'index.m3u8'),
+        // Relative names + running inside the folder: on Windows FFmpeg otherwise
+        // writes init.mp4 to the current folder instead of next to the playlist.
+        '-hls_segment_filename', 'seg_%05d.m4s',
+        'index.m3u8',
       ];
-      await runFfmpeg(args, duration, `${job.label}${job.tag ? ' HQ' : ''} ${job.family.toUpperCase()}`);
+      await runFfmpeg(args, duration, `${job.label}${job.tag ? ' HQ' : ''} ${job.family.toUpperCase()}`, dir);
+      if (!fs.existsSync(path.join(dir, 'init.mp4'))) throw new Error(`FFmpeg didn't create ${path.join(dir, 'init.mp4')}`);
       fs.writeFileSync(path.join(dir, '.done'), new Date().toISOString());
     }
     const m = measureRendition(dir);
