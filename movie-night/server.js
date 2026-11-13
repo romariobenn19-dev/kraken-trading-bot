@@ -20,6 +20,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
+const { pipeline } = require('stream');
 const { WebSocketServer } = require('ws');
 
 // Finish an update that couldn't swap every file last time (Windows had one busy).
@@ -136,12 +137,14 @@ function sendFile(req, res, file, cacheControl) {
       end = Math.min(end, st.size - 1);
       res.writeHead(206, { ...headers, 'Content-Range': `bytes ${start}-${end}/${st.size}`, 'Content-Length': end - start + 1 });
       if (req.method === 'HEAD') return res.end();
-      fs.createReadStream(file, { start, end }).pipe(res);
+      // pipeline() closes the file even if the viewer cancels the download halfway
+      // (a plain .pipe() leaves it open, and Windows then can't replace it during an update).
+      pipeline(fs.createReadStream(file, { start, end }), res, () => {});
       return;
     }
     res.writeHead(200, { ...headers, 'Content-Length': st.size });
     if (req.method === 'HEAD') return res.end();
-    fs.createReadStream(file).pipe(res);
+    pipeline(fs.createReadStream(file), res, () => {});
   });
 }
 
