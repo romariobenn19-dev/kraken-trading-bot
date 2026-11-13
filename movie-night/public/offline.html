@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f3e9da">
+  <title>Movie Night</title>
+  <style>
+    :root { color-scheme: light; }
+    html, body { margin: 0; height: 100%; background: #f3e9da; color: #4a3326; font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    main { min-height: 100%; display: grid; place-items: center; padding: 16px; box-sizing: border-box; }
+    .card { background: #fffaf2; border: 1px solid #e2cfb4; border-radius: 26px; padding: 28px 26px; max-width: 420px; text-align: center; box-shadow: 0 20px 50px rgba(110, 76, 50, .18); }
+    img { width: 96px; height: 96px; border-radius: 22px; }
+    h1 { font: 700 26px Georgia, serif; margin: 12px 0 6px; }
+    p { margin: 0 0 10px; color: #8f7663; }
+    button { margin-top: 10px; border: 0; border-radius: 999px; padding: 12px 24px; font: 700 16px system-ui, sans-serif; background: #b2606b; color: #fff; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="card">
+      <img src="/icon-192.png" alt="">
+      <h1>Movie Night isn't on</h1>
+      <p>The laptop that runs Movie Night is switched off, asleep, or not connected right now.</p>
+      <p>Check that Tailscale is on, and that the Movie Night laptop is awake. Then try again.</p>
+      <button onclick="location.href='/'">Try again</button>
+    </div>
+  </main>
+  <script>setTimeout(() => { location.href = '/'; }, 30000);</script>
+</body>
+</html>

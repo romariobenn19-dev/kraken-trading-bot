@@ -34,6 +34,16 @@ If Windows says *"Windows protected your PC"*, click **More info**, then **Run a
 3. You: in Movie Night on your laptop, click **Copy** next to **Her link** and send it to her.
 4. Her: open the link in Chrome, type her name, and bookmark it (or add it to her home screen).
 
+## Install it as an app
+
+**Laptop:** open Movie Night in Chrome or Edge and click **⬇ Install app** (top right), or the install icon at the end of the address bar. It gets its own window and a desktop / Start menu icon.
+
+**Her tablet:** her link needs to be secure (`https://…ts.net`) for Chrome to allow installing. Movie Night sets this up with Tailscale automatically. If Tailscale needs a one-time OK, a note appears on your laptop under **Her link** with an **Open Tailscale** button. Once it's on, click **Copy** and send her the new `https://` link. She opens it in Chrome and taps **⬇ Install app** (or Chrome menu → **Add to Home screen → Install**).
+
+If the laptop is off when she opens the app, she sees a friendly "Movie Night isn't on" page, and it retries by itself.
+
+**One of you at a time:** if you open Movie Night in a second browser, tab or device, the newest one takes over and the old one pauses with a "Use here instead" button.
+
 ## Which browser?
 
 Use **Google Chrome** on the laptop and on her tablet. Chrome plays the HEVC versions out of the box on modern graphics. Microsoft Edge can't, unless the "HEVC Video Extensions" app is installed. The desktop icon opens Chrome automatically when it's installed. If a device can't play a movie, it says so on screen instead of waiting forever.

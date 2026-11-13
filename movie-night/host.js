@@ -21,6 +21,8 @@ const APP_FILES = [
   'server.js', 'host.js', 'prepare.js', 'package.json', 'README.md',
   'setup.bat', 'setup-helper.ps1', 'setup-shortcuts.ps1', 'start-movie-night.bat', 'prepare-movie.bat',
   'public/index.html', 'public/app.js', 'public/art.js', 'public/style.css', 'public/icon.png', 'public/icon.ico',
+  'public/manifest.webmanifest', 'public/sw.js', 'public/offline.html', 'public/icon-192.png', 'public/icon-512.png',
+  'public/icon-maskable-512.png', 'public/apple-touch-icon.png',
 ];
 
 /** "Resident.Evil.2026.REPACK.1080p.AMZN.WEB-DL" -> "Resident Evil (2026)" */
@@ -92,7 +94,7 @@ function json(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
-module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendToHosts, libraryChanged, links, onMovieDeleted, restart, savePersonal, openPhotosFolder }) {
+module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendToHosts, libraryChanged, links, onMovieDeleted, restart, savePersonal, openPhotosFolder, httpsStatus, retryHttps }) {
   const FFMPEG = findTool('ffmpeg');
   const FFPROBE = findTool('ffprobe');
   const version = () => JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
@@ -309,7 +311,7 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     try {
       if (req.method === 'GET' && pathname === '/api/host/info') {
         return json(res, 200, {
-          version: version(), links: links(), ...hevcDevices(),
+          version: version(), links: links(), https: httpsStatus(), ...hevcDevices(),
           ffmpegFound: !spawnSync(FFMPEG, ['-version'], { windowsHide: true }).error,
           freeGb: freeSpaceGb(LIBRARY),
         });
@@ -352,6 +354,7 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
       if (pathname === '/api/host/update') return json(res, 200, await applyUpdate());
       if (pathname === '/api/host/personal') { savePersonal(body); return json(res, 200, {}); }
       if (pathname === '/api/host/open-photos') return json(res, 200, { folder: openPhotosFolder() });
+      if (pathname === '/api/host/https-retry') { await retryHttps(); return json(res, 200, httpsStatus()); }
       return json(res, 404, { error: 'Not found' });
     } catch (e) {
       return json(res, 500, { error: e.message });

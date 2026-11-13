@@ -85,12 +85,14 @@ function connect() {
     else if (m.t === 'peers') { peers = m.peers; renderPeers(); renderHold(); }
     else if (m.t === 'react') floatEmoji(m.emoji, m.from);
     else if (m.t === 'welcome') onWelcome(m);
+    else if (m.t === 'replaced') onReplaced();
     else if (m.t === 'jobs') renderJobs(m.jobs);
     else if (m.t === 'library') refreshMovies();
     else if (m.t === 'personal') loadPersonal();
     else if (m.t === 'restarting') { toast('Updating Movie Night… back in a few seconds'); appVersion = 'restarting'; }
   };
-  ws.onclose = () => {
+  ws.onclose = (ev) => {
+    if (replaced || ev.code === 4001) return; // opened somewhere else: don't fight over it
     $('netBanner').classList.remove('hidden');
     setTimeout(connect, Math.min(10000, 500 * 2 ** retry++));
   };
@@ -626,6 +628,7 @@ async function loadHostInfo() {
     hostInfo = await api('/api/host/info');
     $('herLink').textContent = hostInfo.links.her || 'Tailscale is off — start Tailscale on this laptop';
     $('copyLink').disabled = !hostInfo.links.her;
+    renderHttpsNote();
     if (!hostInfo.ffmpegFound) toast('FFmpeg is missing — run setup.bat once so movies can be prepared.', 8000);
   } catch (e) { toast(e.message); }
 }
@@ -929,3 +932,59 @@ $('fsBtn').innerHTML = ICONS.fs; $('fsBtn').setAttribute('aria-label', 'Full scr
 $('subsBtn').innerHTML = ICONS.cc; $('subsBtn').setAttribute('aria-label', 'Subtitles');
 $('backBtn').innerHTML = `${ICONS.back}<span>Movies</span>`;
 updatePlayButton();
+
+// ---- Only one of each of us at a time ------------------------------------------
+let replaced = false;
+function onReplaced() {
+  replaced = true;
+  try { video.pause(); } catch { /* ignore */ }
+  if (hls) { hls.destroy(); hls = null; }
+  releaseWakeLock();
+  $('replacedArt').innerHTML = Art.reaction('shock');
+  $('replaced').classList.remove('hidden');
+}
+$('useHere').onclick = () => location.reload();
+
+// ---- Install as an app ------------------------------------------------------------
+let installPrompt = null;
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  navigator.serviceWorker.register('/sw.js').catch(() => { /* not critical */ });
+}
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  installPrompt = e;
+  $('installBtn').classList.remove('hidden');
+});
+$('installBtn').onclick = async () => {
+  if (!installPrompt) return;
+  installPrompt.prompt();
+  const choice = await installPrompt.userChoice.catch(() => null);
+  if (choice && choice.outcome === 'accepted') $('installBtn').classList.add('hidden');
+  installPrompt = null;
+};
+window.addEventListener('appinstalled', () => {
+  $('installBtn').classList.add('hidden');
+  toast('Installed! Movie Night now has its own icon 🎀');
+});
+
+/** On the laptop: help switch her link to https:// so she can install the app too. */
+function renderHttpsNote() {
+  const el = $('httpsNote');
+  const h = hostInfo && hostInfo.https;
+  if (!h || h.status === 'ok' || h.status === 'checking' || !hostInfo.links.her) { el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  if (h.status === 'needs-enable') {
+    el.innerHTML = `<span>🔒 To let her <b>install the app</b>, her link needs to be secure (https). Tailscale needs a one-time OK:</span>
+      <a class="ghost small" href="${h.enableUrl}" target="_blank" rel="noopener">Open Tailscale</a>
+      <button class="ghost small" id="httpsRetry">I've done it — check again</button>`;
+  } else {
+    el.innerHTML = `<span>🔒 Her link isn't secure yet, so she can't install the app. ${escapeHtml(h.detail || '')}</span>
+      <button class="ghost small" id="httpsRetry">Check again</button>`;
+  }
+  $('httpsRetry').onclick = async () => {
+    $('httpsRetry').textContent = 'Checking…';
+    try { await api('/api/host/https-retry', {}); } catch { /* shown below */ }
+    await loadHostInfo();
+    if (hostInfo.https.status === 'ok') toast('Her link is secure now. Copy it and send her the new one!', 7000);
+  };
+}

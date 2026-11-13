@@ -299,3 +299,15 @@ input#seek:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(233,
   .bar h2 { font-size: 21px; }
   .strip .polaroid { width: 190px; }
 }
+
+/* Install button, secure-link note, "open somewhere else" card */
+.bar-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.https-note { margin: 0 20px 12px; padding: 10px 12px 10px 16px; background: var(--panel); border: 1px dashed var(--accent-soft); border-radius: 16px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; }
+.https-note span { flex: 1 1 260px; }
+.https-note a { text-decoration: none; }
+.replaced { z-index: 30; }
+.replaced-card { width: min(420px, 100%); padding: 26px 24px 24px; text-align: center; align-items: center; gap: 6px; }
+.replaced-card h2 { margin: 6px 0 0; font-size: 22px; }
+.replaced-card p { margin: 0 0 12px; }
+.replaced-art { width: 96px; height: 96px; border-radius: 50%; background: var(--panel-2); overflow: hidden; margin: 0 auto; }

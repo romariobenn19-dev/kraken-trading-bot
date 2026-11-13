@@ -7,6 +7,10 @@
   <meta name="mobile-web-app-capable" content="yes">
   <title>Movie Night</title>
   <link rel="icon" href="/icon.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Movie Night">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -27,7 +31,10 @@
   <section id="library" class="screen hidden">
     <header class="bar">
       <h2><span class="title-bow"></span><span class="couple-title">Movie Night</span></h2>
-      <div id="peersLib" class="peers"></div>
+      <div class="bar-right">
+        <button id="installBtn" class="ghost small hidden">⬇ Install app</button>
+        <div id="peersLib" class="peers"></div>
+      </div>
     </header>
 
     <div class="strip" aria-hidden="true"><div class="strip-track" id="strip"></div></div>
@@ -44,6 +51,7 @@
       <button id="personalBtn" class="ghost small">🎀 Personalize</button>
       <button id="updateBtn" class="ghost small">Check for updates</button>
     </div>
+    <div id="httpsNote" class="https-note hidden"></div>
     <div id="jobs" class="jobs"></div>
 
     <h3 class="section-title pad">Our movies</h3>
@@ -157,6 +165,16 @@
           <button id="savePersonal" class="primary">Save</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Shown when this person opens Movie Night somewhere else -->
+  <div id="replaced" class="modal replaced hidden" role="alertdialog" aria-modal="true" aria-labelledby="replacedTitle">
+    <div class="sheet replaced-card">
+      <div id="replacedArt" class="replaced-art"></div>
+      <h2 id="replacedTitle">Movie Night is open somewhere else</h2>
+      <p class="muted">You opened it in another browser, tab or device, so it's been paused here.</p>
+      <button id="useHere" class="primary">Use here instead</button>
     </div>
   </div>
 

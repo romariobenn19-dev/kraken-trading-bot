@@ -78,8 +78,17 @@ function safeEqual(a, b) {
 /** Requests from the laptop itself: the host. Only the host can add/delete movies or update. */
 function isLocal(req) {
   const a = (req.socket && req.socket.remoteAddress) || '';
-  return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
+  if (!(a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1')) return false;
+  // Requests relayed by Tailscale's HTTPS (her https:// link) also arrive from 127.0.0.1,
+  // so only count it as the laptop when it was addressed to localhost and not forwarded.
+  if (req.headers['x-forwarded-for'] || req.headers['tailscale-user-login']) return false;
+  const h = String(req.headers.host || '').toLowerCase();
+  return h.startsWith('localhost') || h.startsWith('127.0.0.1') || h.startsWith('[::1]');
 }
+
+// Files needed to install the app / show the "not on" page. Nothing private in them.
+const PUBLIC_FILES = new Set(['/manifest.webmanifest', '/sw.js', '/offline.html', '/icon.png', '/icon.ico',
+  '/icon-192.png', '/icon-512.png', '/icon-maskable-512.png', '/apple-touch-icon.png']);
 
 function isAuthorized(req, url) {
   return isLocal(req) || safeEqual(url.searchParams.get('key'), config.key) || safeEqual(parseCookies(req.headers.cookie).mn_key, config.key);
@@ -133,6 +142,11 @@ const server = http.createServer((req, res) => {
   const hostApi = url.pathname.startsWith('/api/host/');
   if (req.method !== 'GET' && req.method !== 'HEAD' && !(hostApi && req.method === 'POST')) { res.writeHead(405); res.end(); return; }
 
+  if (PUBLIC_FILES.has(url.pathname) && req.method !== 'POST') {
+    const extra = url.pathname === '/sw.js' ? 'no-cache' : 'public, max-age=86400';
+    sendFile(req, res, path.join(PUBLIC, url.pathname.slice(1)), extra);
+    return;
+  }
   if (!isAuthorized(req, url)) {
     res.writeHead(401, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end('<!doctype html><meta name=viewport content="width=device-width"><body style="font-family:sans-serif;' +
@@ -300,6 +314,14 @@ function handle(ws, c, msg) {
       c.role = c.isHost || msg.role === 'host' ? 'host' : 'guest';
       c.hevc = typeof msg.hevc === 'boolean' ? msg.hevc : null;
       rememberDevice(c, msg.deviceId);
+      // One of you at a time: a newer window/browser/device takes over from the older one.
+      for (const [otherWs, other] of clients) {
+        if (otherWs !== ws && other.name.trim().toLowerCase() === c.name.trim().toLowerCase()) {
+          send(otherWs, { t: 'replaced' });
+          clients.delete(otherWs);
+          setTimeout(() => otherWs.close(4001, 'Opened somewhere else'), 100);
+        }
+      }
       send(ws, publicState());
       break;
     case 'ping':
@@ -477,9 +499,61 @@ function links() {
   const k = encodeURIComponent(config.key);
   return {
     host: `http://localhost:${PORT}/?key=${k}`,
-    her: tailscale.length ? `http://${tailscale[0]}:${PORT}/?key=${k}` : null,
+    her: tsHttps.url ? `${tsHttps.url}/?key=${k}` : tailscale.length ? `http://${tailscale[0]}:${PORT}/?key=${k}` : null,
+    herSecure: !!tsHttps.url,
     lan: lan.map((ip) => `http://${ip}:${PORT}/?key=${k}`),
   };
+}
+
+// ---- Secure https:// link for her (lets her install the app) -------------------
+// Uses Tailscale's own HTTPS ("tailscale serve"): a real certificate for
+// https://<laptop>.<tailnet>.ts.net that only your Tailscale devices can reach.
+const tsHttps = { status: 'checking', url: null, enableUrl: null, detail: '' };
+
+function findTailscale() {
+  const candidates = ['tailscale'];
+  if (process.platform === 'win32') candidates.unshift(path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Tailscale', 'tailscale.exe'));
+  if (process.platform === 'darwin') candidates.unshift('/Applications/Tailscale.app/Contents/MacOS/Tailscale');
+  for (const c of candidates) {
+    if (c !== 'tailscale' && !fs.existsSync(c)) continue;
+    const r = require('child_process').spawnSync(c, ['version'], { windowsHide: true, timeout: 8000 });
+    if (!r.error && r.status === 0) return c;
+  }
+  return null;
+}
+
+function runTs(cli, args, timeoutMs = 20000) {
+  return new Promise((resolve) => {
+    let out = '';
+    const p = spawn(cli, args, { windowsHide: true });
+    const t = setTimeout(() => { p.kill(); resolve({ code: -1, out }); }, timeoutMs);
+    p.stdout.on('data', (d) => { out += d; });
+    p.stderr.on('data', (d) => { out += d; });
+    p.on('error', () => { clearTimeout(t); resolve({ code: -1, out }); });
+    p.on('close', (code) => { clearTimeout(t); resolve({ code, out }); });
+  });
+}
+
+async function setupHttps() {
+  Object.assign(tsHttps, { status: 'checking', url: null, enableUrl: null, detail: '' });
+  const cli = findTailscale();
+  if (!cli) { Object.assign(tsHttps, { status: 'no-tailscale', detail: 'Tailscale is not installed on this laptop.' }); return; }
+  const st = await runTs(cli, ['status', '--json'], 10000);
+  let self;
+  try { self = JSON.parse(st.out).Self; } catch { /* not running */ }
+  if (!self || !self.DNSName) { Object.assign(tsHttps, { status: 'off', detail: 'Tailscale is off on this laptop.' }); return; }
+  const host = self.DNSName.replace(/\.$/, '');
+  // Serve https://<host>/ -> this app. Safe to repeat; it just replaces the same setting.
+  const r = await runTs(cli, ['serve', '--bg', String(PORT)], 25000);
+  const link = (r.out.match(/https:\/\/login\.tailscale\.com\/\S+/) || [])[0];
+  if (r.code === 0 && !link) {
+    Object.assign(tsHttps, { status: 'ok', url: `https://${host}` });
+    console.log(`  Secure link for her:    https://${host}/?key=${encodeURIComponent(config.key)}`);
+  } else if (link) {
+    Object.assign(tsHttps, { status: 'needs-enable', enableUrl: link, detail: 'HTTPS needs switching on once in Tailscale.' });
+  } else {
+    Object.assign(tsHttps, { status: 'failed', detail: r.out.trim().split('\n').slice(-2).join(' ').slice(0, 300) });
+  }
 }
 
 function openBrowser(url) {
@@ -519,6 +593,7 @@ function restart() {
 
 const host = createHost({
   ROOT, LIBRARY, config, saveConfig, links, restart, savePersonal, openPhotosFolder,
+  httpsStatus: () => ({ ...tsHttps }), retryHttps: () => setupHttps(),
   sendToHosts(msg) {
     const data = JSON.stringify(msg);
     for (const [ws, c] of clients) if (c.isHost && ws.readyState === ws.OPEN) ws.send(data);
@@ -557,6 +632,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('  Everything else - adding movies, her link, updates - is in the app.\n');
   if (ARGS.has('--open')) openBrowser(l.host);
   host.repairMissing().then((fixed) => { if (fixed.length) broadcast({ t: 'library' }); }).catch(() => {});
+  setupHttps().catch(() => {});
   ensureWindowsShortcuts();
 });
 
