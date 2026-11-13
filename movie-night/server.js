@@ -441,11 +441,17 @@ function openBrowser(url) {
 }
 
 /** Restart after an update: hand over to a fresh copy of the server. */
+// Exit codes understood by start-movie-night.bat
+const EXIT_RESTART = 75;      // "start me again" (after an update)
+const EXIT_ALREADY_RUNNING = 3;
+
 function restart() {
   broadcast({ t: 'restarting' });
   setTimeout(() => {
     for (const ws of wss.clients) ws.terminate();
     server.close();
+    // Started by start-movie-night.bat: it relaunches us in the same window.
+    if (process.env.MN_SUPERVISED === '1') process.exit(EXIT_RESTART);
     const log = fs.openSync(path.join(ROOT, 'movie-night.log'), 'a');
     spawn(process.execPath, [path.join(ROOT, 'server.js'), '--restarted'],
       { cwd: ROOT, detached: true, stdio: ['ignore', log, log], windowsHide: true, env: process.env }).unref();
@@ -479,7 +485,7 @@ server.on('error', (err) => {
   // Already running (e.g. started at login): just open it.
   if (ARGS.has('--open')) openBrowser(links().host);
   else if (!ARGS.has('--background')) console.log(`\n  Movie Night is already running. Open: ${links().host}\n`);
-  setTimeout(() => process.exit(0), 500);
+  setTimeout(() => process.exit(EXIT_ALREADY_RUNNING), 500);
 });
 
 server.listen(PORT, '0.0.0.0', () => {
@@ -493,4 +499,22 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('  Everything else - adding movies, her link, updates - is in the app.\n');
   if (ARGS.has('--open')) openBrowser(l.host);
   host.repairMissing().then((fixed) => { if (fixed.length) broadcast({ t: 'library' }); }).catch(() => {});
+  ensureWindowsShortcuts();
 });
+
+/**
+ * Windows: point the desktop / Start menu / startup shortcuts at start-movie-night.bat
+ * (in a minimised window). Earlier versions used a hidden launcher that some PCs block.
+ */
+function ensureWindowsShortcuts() {
+  const LAUNCHER = 'bat-minimised-1';
+  if (process.platform !== 'win32' || config.launcher === LAUNCHER) return;
+  const script = path.join(ROOT, 'setup-shortcuts.ps1');
+  if (!fs.existsSync(script)) return;
+  const p = spawn('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script],
+    { cwd: ROOT, windowsHide: true, stdio: 'ignore' });
+  p.on('error', () => {});
+  p.on('close', (code) => {
+    if (code === 0) { config.launcher = LAUNCHER; saveConfig(); console.log('  Desktop and startup shortcuts updated.'); }
+  });
+}

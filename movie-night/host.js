@@ -19,7 +19,7 @@ const VIDEO_EXT = new Set(['.mp4', '.mkv', '.avi', '.mov', '.m4v', '.wmv', '.web
 // new version's package.json (movieNight.files), so files added later are never missed.
 const APP_FILES = [
   'server.js', 'host.js', 'prepare.js', 'package.json', 'README.md',
-  'launch.vbs', 'setup.bat', 'setup-helper.ps1', 'start-movie-night.bat', 'prepare-movie.bat',
+  'setup.bat', 'setup-helper.ps1', 'setup-shortcuts.ps1', 'start-movie-night.bat', 'prepare-movie.bat',
   'public/index.html', 'public/app.js', 'public/art.js', 'public/style.css', 'public/icon.png', 'public/icon.ico',
 ];
 

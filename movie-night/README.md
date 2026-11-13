@@ -82,7 +82,7 @@ Her speed test showed **7.75 Mbps**. Your 42 Mbps upload is plenty.
 | "Her link: Tailscale is off" | Open Tailscale on the laptop and connect, then refresh the page |
 | It keeps pausing for her | Check her bubble's Mbps number. Moving closer to the router, or switching the router to 5 GHz Wi-Fi, helps most. |
 | A movie failed to prepare | The error shows in its progress box. Send a screenshot. |
-| Something odd | `start-movie-night.bat` runs Movie Night in a visible window, so you can see messages. `movie-night.log` in the folder has the background log. |
+| Something odd | Movie Night runs in a minimised window called "Movie Night" on your taskbar. Open it to see messages. Closing it stops Movie Night; the desktop icon starts it again. |
 
 Settings → System → Power: set the laptop to never sleep while plugged in, or a movie can stop halfway through.
 
