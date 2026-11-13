@@ -535,15 +535,35 @@ let lastUpgrade = 0;
 let upgradeGraceUntil = 0;
 function maybeUpgradeBuffered() {
   if (!hls || !hls.autoLevelEnabled || !state || state.paused) return;
-  const playing = hls.currentLevel, loading = hls.nextLoadLevel;
-  if (playing < 0 || loading < 0 || loading - playing < 2) return;
-  if (bufferAhead() < 30 || Date.now() - lastUpgrade < 60000) return;
-  if (hls.bandwidthEstimate < hls.levels[loading].bitrate * 1.8) return;
+  const playing = hls.currentLevel;
+  if (playing < 0 || bufferAhead() < 30 || Date.now() - lastUpgrade < 30000) return;
+  // Best version the connection comfortably sustains right now (1.5x headroom so the
+  // buffer refills while we re-download).
+  const bw = hls.bandwidthEstimate || 0;
+  const top = hls.autoLevelCapping >= 0 ? hls.autoLevelCapping : hls.levels.length - 1;
+  let target = -1;
+  for (let i = top; i > playing; i--) {
+    if (levelRate(i) * 1.5 <= bw) { target = i; break; }
+  }
+  if (target < 0) return;
+  const KEEP = 15; // seconds of what's already loaded to keep as a safety cushion
+  const sc = hls.streamController;
+  if (sc && typeof sc.flushMainBuffer === 'function' && typeof sc.getBufferedFrag === 'function') {
+    // Only worth it if what's queued up after the cushion is lower quality than we can now get.
+    const queued = sc.getBufferedFrag(video.currentTime + KEEP + 2);
+    if (!queued || queued.level >= target) return;
+    lastUpgrade = Date.now();
+    if (typeof sc.abortCurrentFrag === 'function') sc.abortCurrentFrag();
+    sc.flushMainBuffer(video.currentTime + KEEP, Number.POSITIVE_INFINITY); // hls.js re-downloads it, sharper
+    return;
+  }
+  // Fallback: switch from the next chunk on (re-downloads everything after it).
   lastUpgrade = Date.now();
-  upgradeGraceUntil = Date.now() + 10000;
-  hls.nextLevel = loading; // keeps the current chunk, re-downloads the rest at the higher quality
+  upgradeGraceUntil = Date.now() + 12000;
+  hls.nextLevel = target;
   hls.once(Hls.Events.LEVEL_SWITCHED, () => { if (hls) hls.loadLevel = -1; }); // back to automatic
 }
+const levelRate = (i) => hls.levels[i].averageBitrate || hls.levels[i].bitrate;
 
 function reportStatus() {
   const visible = document.visibilityState !== 'hidden';
@@ -558,7 +578,7 @@ function reportStatus() {
   send({
     t: 'status', movieId: meta.id, ct: video.currentTime, buffer: ahead, visible, error: playerError,
     full: dur > 0 && video.currentTime + ahead >= dur - 1,
-    stalled, quality: lv ? labelFor(lv).split(' · ')[0] : '',
+    stalled, quality: qualityText(lv),
     codec: lv && lv.videoCodec ? (/^(hvc1|hev1)/.test(lv.videoCodec) ? 'hevc' : 'avc') : '', bw: hls ? Math.round(hls.bandwidthEstimate || 0) : 0,
   });
 }
@@ -1363,8 +1383,23 @@ $('subsAdd').onclick = async () => {
  * the more buffer there is (a dip can't cause a pause before quality drops back).
  */
 function tuneAbrForBuffer() {
-  if (!hls) return;
+  if (!hls || !hls.levels.length) return;
   const ahead = bufferAhead();
   hls.config.abrBandWidthUpFactor = ahead > 90 ? 0.95 : ahead > 45 ? 0.85 : 0.7;
   hls.config.abrBandWidthFactor = ahead > 90 ? 1.0 : ahead > 45 ? 0.9 : 0.8;
+  // Don't panic on a short dip: with plenty loaded, keep a quality floor.
+  // (If the connection really collapses, the buffer drains below these and the floor lifts.)
+  const levels = hls.levels;
+  const top = hls.autoLevelCapping >= 0 ? hls.autoLevelCapping : levels.length - 1;
+  const firstAtLeast = (w) => { const i = levels.findIndex((l) => l.width >= w); return i < 0 ? top : Math.min(i, top); };
+  const floor = ahead > 90 ? firstAtLeast(1900) : ahead > 45 ? firstAtLeast(1260) : 0;
+  hls.config.minAutoBitrate = floor > 0 ? levels[floor].maxBitrate || levels[floor].bitrate : 0;
+}
+
+/** "1080p HQ", or "480p ↗ 1080p HQ" while sharper video is being loaded after a dip. */
+function qualityText(lv) {
+  if (!lv) return '';
+  const name = (l) => labelFor(l).split(' · ')[0];
+  const next = hls && hls.levels[hls.nextLoadLevel];
+  return next && next !== lv && (next.bitrate > lv.bitrate) ? `${name(lv)} ↗ ${name(next)}` : name(lv);
 }
