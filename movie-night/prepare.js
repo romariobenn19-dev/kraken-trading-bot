@@ -408,7 +408,14 @@ async function main() {
         '-frames:v', '1', '-vf', `scale=640:-2${toneMap},format=yuvj420p`, '-q:v', '4', poster], 0, 'poster');
     } catch (e) { console.warn('  (could not make a poster image - not a problem)'); }
   }
-  const subtitles = await prepareSubtitles(opts, info, outDir);
+  // Subtitles are read in the background while the video converts (pulling built-in
+  // subtitles means reading the whole file, which can take minutes for a big film).
+  let subtitles = [];
+  let lastPublish = null;
+  const subtitlesReady = prepareSubtitles(opts, info, outDir).then((list) => {
+    subtitles = list;
+    if (lastPublish) publish(...lastPublish); // movie already visible: add them now
+  }).catch((e) => console.log(`  Subtitles skipped: ${e.message}`));
   // Remember the original file (private, never served) so subtitles can be added later.
   fs.writeFileSync(path.join(outDir, '.source.json'), JSON.stringify({ file: opts.input }));
 
@@ -478,6 +485,7 @@ async function main() {
    * `converting` = a version that's still being written (watch while it converts).
    */
   function publish(final, converting) {
+    lastPublish = [final, converting];
     const hevc = [...done.hevc, ...(converting && converting.family === 'hevc' ? [converting] : [])].sort((a, b) => b.peak - a.peak);
     const avc = [...done.avc, ...(converting && converting.family === 'avc' ? [converting] : [])].sort((a, b) => b.peak - a.peak);
     if (hevc.length) writeMaster(outDir, 'master-hevc.m3u8', hevc, fps);
@@ -499,6 +507,8 @@ async function main() {
     if (!final && step.n === 1 && !converting) console.log('\n  First version finished - making the backup versions...');
   }
 
+  await subtitlesReady;
+  publish(true);
   const totalGb = [...done.hevc, ...done.avc].reduce((s, r) => s + r.bytes, 0) / 1e9;
   emit({ done: true, id, title, gb: totalGb });
   console.log(`\nDone! "${title}" is ready in Movie Night (${totalGb.toFixed(1)} GB on disk).`);

@@ -107,32 +107,47 @@ function run(ffmpeg, args) {
 async function convertSubtitles(items, movieFile, outDir, ffmpeg = 'ffmpeg', log = () => {}) {
   const subsDir = path.join(outDir, 'subs');
   fs.mkdirSync(subsDir, { recursive: true });
-  const done = [];
+  // Give every item its output file name first.
+  const planned = [];
   for (const it of items) {
     const label = String(it.label || langName(it.lang) || 'Subtitles').slice(0, 40);
     const lang = normLang(it.lang) || 'und';
     let name = `${slug(label)}.vtt`;
-    for (let i = 2; done.some((d) => d.file === `subs/${name}`); i++) name = `${slug(label)}-${i}.vtt`;
-    const out = path.join(subsDir, name);
-    try {
-      if (it.type === 'track') {
-        if (!Number.isInteger(it.stream)) throw new Error('bad track');
-        await run(ffmpeg, ['-i', movieFile, '-map', `0:${it.stream}`, '-f', 'webvtt', out]);
-      } else {
-        const src = path.resolve(String(it.path));
-        if (!SUB_EXT.has(path.extname(src).toLowerCase()) || !fs.existsSync(src)) throw new Error('subtitle file not found');
-        // Older .srt files are often not UTF-8 (accents/Greek would come out garbled).
-        const raw = fs.readFileSync(src);
-        const enc = isUtf8(raw) ? [] : ['-sub_charenc', lang === 'el' ? 'CP1253' : lang === 'ru' ? 'CP1251' : 'CP1252'];
-        await run(ffmpeg, [...enc, '-i', src, '-f', 'webvtt', out]);
+    for (let i = 2; planned.some((d) => d.name === name); i++) name = `${slug(label)}-${i}.vtt`;
+    planned.push({ it, label, lang, name, out: path.join(subsDir, name) });
+  }
+  const failed = new Set();
+  // Built-in tracks: ONE read of the movie for all of them (subtitles are spread through
+  // the whole file, so each separate extraction would read the entire file again).
+  const tracks = planned.filter((p) => p.it.type === 'track' && Number.isInteger(p.it.stream));
+  if (tracks.length) {
+    const args = ['-i', movieFile];
+    for (const t of tracks) args.push('-map', `0:${t.it.stream}`, '-f', 'webvtt', t.out);
+    try { await run(ffmpeg, args); } catch (e) {
+      // One bad track shouldn't sink the others: retry them one at a time.
+      for (const t of tracks) {
+        try { await run(ffmpeg, ['-i', movieFile, '-map', `0:${t.it.stream}`, '-f', 'webvtt', t.out]); } catch (e2) { failed.add(t); log(`  Could not use subtitles "${t.label}": ${e2.message.split('\n')[0]}`); }
       }
-      const size = fs.statSync(out).size;
-      if (size < 20) { fs.rmSync(out, { force: true }); throw new Error('no subtitle lines found'); }
-      done.push({ file: `subs/${name}`, label, lang });
-      log(`  Subtitles: ${label}`);
-    } catch (e) {
-      log(`  Could not use subtitles "${label}": ${e.message.split('\n')[0]}`);
     }
+  }
+  for (const p of planned.filter((x) => x.it.type !== 'track')) {
+    try {
+      const src = path.resolve(String(p.it.path));
+      if (!SUB_EXT.has(path.extname(src).toLowerCase()) || !fs.existsSync(src)) throw new Error('subtitle file not found');
+      // Older .srt files are often not UTF-8 (accents/Greek would come out garbled).
+      const raw = fs.readFileSync(src);
+      const enc = isUtf8(raw) ? [] : ['-sub_charenc', p.lang === 'el' ? 'CP1253' : p.lang === 'ru' ? 'CP1251' : 'CP1252'];
+      await run(ffmpeg, [...enc, '-i', src, '-f', 'webvtt', p.out]);
+    } catch (e) { failed.add(p); log(`  Could not use subtitles "${p.label}": ${e.message.split('\n')[0]}`); }
+  }
+  const done = [];
+  for (const p of planned) {
+    if (failed.has(p) || (p.it.type === 'track' && !Number.isInteger(p.it.stream))) continue;
+    let size = 0;
+    try { size = fs.statSync(p.out).size; } catch { /* not written */ }
+    if (size < 20) { fs.rmSync(p.out, { force: true }); log(`  Could not use subtitles "${p.label}": no subtitle lines found`); continue; }
+    done.push({ file: `subs/${p.name}`, label: p.label, lang: p.lang });
+    log(`  Subtitles: ${p.label}`);
   }
   return done;
 }
