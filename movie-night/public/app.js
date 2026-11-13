@@ -443,7 +443,9 @@ function beginLoading(maxOk, savedLevel) {
   let start = maxOk;
   const bw = savedBandwidth();
   if (bw) {
-    while (start > 0 && (hls.levels[start].averageBitrate || hls.levels[start].bitrate) > bw * 0.75) start--;
+    // Shaky connection lately? Start more carefully.
+    const factor = isShaky() ? 0.5 : 0.75;
+    while (start > 0 && (hls.levels[start].averageBitrate || hls.levels[start].bitrate) > bw * factor) start--;
   }
   hls.startLevel = savedLevel ? savedLevel.index : start;
   hls.startLoad(pendingStart);
@@ -537,16 +539,17 @@ function maybeUpgradeBuffered() {
   if (!hls || !hls.autoLevelEnabled || !state || state.paused) return;
   const playing = hls.currentLevel;
   if (playing < 0 || bufferAhead() < 30 || Date.now() - lastUpgrade < 30000) return;
-  // Best version the connection comfortably sustains right now (1.5x headroom so the
-  // buffer refills while we re-download).
-  const bw = hls.bandwidthEstimate || 0;
+  if (Date.now() - lastStallAt < 120000) return; // just had a pause: stay steady for a bit
+  // Best version the connection sustains even at its slowest moment of the last 30 s
+  // (1.5x headroom so the buffer refills while we re-download).
+  const bw = safeBandwidth();
   const top = hls.autoLevelCapping >= 0 ? hls.autoLevelCapping : hls.levels.length - 1;
   let target = -1;
   for (let i = top; i > playing; i--) {
     if (levelRate(i) * 1.5 <= bw) { target = i; break; }
   }
   if (target < 0) return;
-  const KEEP = 15; // seconds of what's already loaded to keep as a safety cushion
+  const KEEP = 20; // seconds of what's already loaded to keep as a safety cushion
   const sc = hls.streamController;
   if (sc && typeof sc.flushMainBuffer === 'function' && typeof sc.getBufferedFrag === 'function') {
     // Only worth it if what's queued up after the cushion is lower quality than we can now get.
@@ -578,13 +581,17 @@ function reportStatus() {
   send({
     t: 'status', movieId: meta.id, ct: video.currentTime, buffer: ahead, visible, error: playerError,
     full: dur > 0 && video.currentTime + ahead >= dur - 1,
-    stalled, quality: qualityText(lv),
+    stalled, quality: qualityText(lv), shaky: isShaky(),
     codec: lv && lv.videoCodec ? (/^(hvc1|hev1)/.test(lv.videoCodec) ? 'hevc' : 'avc') : '', bw: hls ? Math.round(hls.bandwidthEstimate || 0) : 0,
   });
 }
 setInterval(reportStatus, 1000);
 video.addEventListener('waiting', () => {
-  if (state && !state.paused) { stalled = true; reportStatus(); }
+  if (state && !state.paused) {
+    if (!stalled) noteStall();
+    stalled = true;
+    reportStatus();
+  }
 });
 video.addEventListener('playing', () => { stalled = false; });
 video.addEventListener('timeupdate', updateTime);
@@ -728,6 +735,7 @@ function renderHold() {
   if (!state || !meta || !state.hold) { el.classList.add('hidden'); return; }
   el.classList.remove('hidden');
   const need = state.hold.reason === 'starting' ? state.startBuffer : state.resumeTarget;
+  const needFor = (p) => (state.hold.reason === 'starting' && p.shaky ? Math.max(need, 45) : need);
   const who = (state.hold.who || []).join(' & ');
   const pup = personalInfo.dog || 'The pup';
   $('holdText').textContent = state.hold.reason === 'buffering'
@@ -740,7 +748,7 @@ function renderHold() {
     else if (p.error) note = 'playback problem';
     else if (!p.visible) note = 'app not on screen';
     else if (p.late) note = 'still loading, will catch up';
-    const pct = p.full ? 100 : Math.min(100, (p.buffer / need) * 100);
+    const pct = p.full ? 100 : Math.min(100, (p.buffer / needFor(p)) * 100);
     return `<div class="hold-peer"><span class="avatar">${Art.head(avatarFor(p))}</span><div class="hold-peer-main">
       <div class="hold-peer-top"><b>${escapeHtml(p.name)}</b><span class="muted">${note ? escapeHtml(note) : p.quality || ''}</span></div>
       ${note ? '' : `<div class="meter"><i style="width:${pct.toFixed(0)}%"></i></div>`}</div></div>`;
@@ -1392,7 +1400,9 @@ function tuneAbrForBuffer() {
   const levels = hls.levels;
   const top = hls.autoLevelCapping >= 0 ? hls.autoLevelCapping : levels.length - 1;
   const firstAtLeast = (w) => { const i = levels.findIndex((l) => l.width >= w); return i < 0 ? top : Math.min(i, top); };
-  const floor = ahead > 90 ? firstAtLeast(1900) : ahead > 45 ? firstAtLeast(1260) : 0;
+  let floor = ahead > 90 ? firstAtLeast(1900) : ahead > 45 ? firstAtLeast(1260) : 0;
+  // Only hold a floor the connection can actually keep up with at its slowest lately.
+  while (floor > 0 && levelRate(floor) * 1.2 > safeBandwidth()) floor--;
   hls.config.minAutoBitrate = floor > 0 ? levels[floor].maxBitrate || levels[floor].bitrate : 0;
 }
 
@@ -1402,4 +1412,34 @@ function qualityText(lv) {
   const name = (l) => labelFor(l).split(' · ')[0];
   const next = hls && hls.levels[hls.nextLoadLevel];
   return next && next !== lv && (next.bitrate > lv.bitrate) ? `${name(lv)} ↗ ${name(next)}` : name(lv);
+}
+
+// ---- Steady mode for shaky connections --------------------------------------------
+const bwSamples = []; // [time, bits/s] over the last minute
+let lastStallAt = 0;
+setInterval(() => {
+  if (!hls || !hls.bandwidthEstimate || hls.currentLevel < 0) return;
+  bwSamples.push([Date.now(), hls.bandwidthEstimate]);
+  while (bwSamples.length && bwSamples[0][0] < Date.now() - 60000) bwSamples.shift();
+}, 2000);
+
+/** The slowest the connection has been over the last 30 s (what we can count on). */
+function safeBandwidth() {
+  const recent = bwSamples.filter(([t]) => t > Date.now() - 30000).map(([, b]) => b);
+  if (!recent.length) return hls ? hls.bandwidthEstimate || 0 : 0;
+  return Math.min(...recent);
+}
+
+function noteStall() {
+  lastStallAt = Date.now();
+  let log = [];
+  try { log = JSON.parse(store.get('mn_stalls') || '[]'); } catch { /* ignore */ }
+  log = [...log.filter((t) => t > Date.now() - 7 * 86400000), Date.now()].slice(-20);
+  store.set('mn_stalls', JSON.stringify(log));
+}
+
+/** Two or more pauses on this device in the last week: be careful. */
+function isShaky() {
+  try { return JSON.parse(store.get('mn_stalls') || '[]').filter((t) => t > Date.now() - 7 * 86400000).length >= 2; }
+  catch { return false; }
 }

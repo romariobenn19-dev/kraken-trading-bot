@@ -50,7 +50,9 @@ fs.mkdirSync(LIBRARY, { recursive: true });
 const LOW_BUFFER = 1.5;                         // seconds left before we call it a stall
 const RESUME_STEPS = [20, 40, 60, 90, 120];     // buffer needed to (re)start; grows after repeated stalls
 const START_BUFFER = 15;
-const START_TIMEOUT = 20000;   // after this, start without anyone still at the very beginning of loading
+const START_TIMEOUT = 20000;   // after this, start without anyone who hasn't managed to load anything
+const START_TIMEOUT_MAX = 90000; // ...and after this, without anyone still loading
+const SHAKY_START = 45;          // seconds a viewer with a shaky connection loads before starting
 const LATE_READY = 10;          // a late joiner counts again once this many seconds are loaded
 
 // ---- HTTP -------------------------------------------------------------------
@@ -243,7 +245,7 @@ function peers() {
   return [...clients.values()].map((c) => ({
     id: c.id, name: c.name, role: c.role, buffer: c.buffer, full: c.full, stalled: c.stalled,
     quality: c.quality, bw: c.bw, ready: c.movieId === room.movieId,
-    visible: c.visible !== false, error: c.error || null, late: !!c.late, hevc: c.hevc,
+    visible: c.visible !== false, error: c.error || null, late: !!c.late, hevc: c.hevc, shaky: !!c.shaky,
   }));
 }
 
@@ -272,6 +274,8 @@ function leaveBehind(list) {
 
 function hasBuffer(c, need) {
   if (c.movieId !== room.movieId) return false;
+  // Shaky connections start with a bigger cushion (fewer pauses mid-movie).
+  if (room.hold && room.hold.reason === 'starting' && c.shaky) need = Math.max(need, SHAKY_START);
   if (Math.abs(c.ct - room.pos) > 3) return false; // hasn't caught up with the latest seek yet
   return c.full || c.buffer >= need;
 }
@@ -293,7 +297,11 @@ function evaluate() {
     // Don't let one slow starter hold everyone up: after a while, start with whoever is ready.
     if (waiting.length && room.hold.reason === 'starting' && Date.now() - room.hold.since > START_TIMEOUT) {
       const ready = list.filter((c) => participating(c) && !c.late && hasBuffer(c, need));
-      if (ready.length) { leaveBehind(waiting); waiting = []; }
+      // Leave behind only viewers who are stuck (nothing loaded); slow-but-loading ones are
+      // waited for, up to START_TIMEOUT_MAX.
+      const longWait = Date.now() - room.hold.since > START_TIMEOUT_MAX;
+      const stuck = waiting.filter((c) => longWait || c.buffer < 3);
+      if (ready.length && stuck.length) { leaveBehind(stuck); waiting = waiting.filter((c) => !stuck.includes(c)); }
     }
     const waitingFor = waiting.map((c) => c.name);
     if (!waitingFor.length) {
@@ -376,6 +384,7 @@ function handle(ws, c, msg) {
       c.quality = String(msg.quality || '').slice(0, 40);
       c.bw = Number(msg.bw) || 0;
       c.visible = msg.visible !== false;
+      c.shaky = !!msg.shaky;
       c.error = msg.error ? String(msg.error).slice(0, 40) : null;
       c.seenAt = Date.now();
       if (c.late && (c.full || c.buffer >= LATE_READY) && Math.abs(c.ct - nowPos()) < 3) c.late = false;
