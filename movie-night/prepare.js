@@ -50,6 +50,8 @@ const HEVC_LADDER = [
   // Extra-sharp 1080p for 1080p screens on ~6-8 Mbps connections (e.g. a Galaxy Tab A8).
   { label: '1080p', tag: 'hq', width: 1920, kbps: 4500, codec: 'hvc1.1.6.L123.90' },
   { label: '1080p', width: 1920, kbps: 3200, codec: 'hvc1.1.6.L123.90' },
+  // Still full 1080p, compressed harder, so slow or shaky Wi-Fi can stay at 1080p.
+  { label: '1080p', tag: 'lite', width: 1920, kbps: 1600, codec: 'hvc1.1.6.L123.90' },
   { label: '720p',  width: 1280, kbps: 1600, codec: 'hvc1.1.6.L93.90' },
   { label: '480p',  width: 854,  kbps: 800,  codec: 'hvc1.1.6.L90.90' },
   { label: '360p',  width: 640,  kbps: 420,  codec: 'hvc1.1.6.L90.90' },
@@ -57,6 +59,7 @@ const HEVC_LADDER = [
 // Fallback for devices/browsers without HEVC support.
 const AVC_LADDER = [
   { label: '1080p', width: 1920, kbps: 5000, codec: 'avc1.640028' },
+  { label: '1080p', tag: 'lite', width: 1920, kbps: 2400, codec: 'avc1.640028' },
   { label: '720p',  width: 1280, kbps: 2500, codec: 'avc1.64001f' },
   { label: '480p',  width: 854,  kbps: 1100, codec: 'avc1.64001e' },
 ];
@@ -371,9 +374,12 @@ async function main() {
     if (opts.hevc) jobs.unshift({ ...nativeJob, kbps: hevcKbps, codec: 'hvc1.1.6.L93.90', family: 'hevc' });
   }
 
-  // Quick: only what a 1080p screen actually uses (1080p HQ, a lighter 1080p for slower links, 720p, 480p).
+  // Quick: only what a 1080p screen actually uses (1080p HQ, 1080p, 1080p Lite for slow links, 480p).
   if (opts.quick) {
-    const QUICK = new Set(['1080p-hq', '1080p', '720p', '480p']);
+    // 1080p Lite uses the same data as 720p but keeps full 1080p, so it replaces 720p here.
+    const QUICK = new Set(['1080p-hq', '1080p', '1080p-lite', '480p']);
+    const has1080 = jobs.some((j) => j.label === '1080p');
+    if (!has1080) QUICK.add('720p');
     // (1080p H.264 stays: it's what a tablet without HEVC would watch.)
     const quick = jobs.filter((j) => QUICK.has(`${j.label}${j.tag ? `-${j.tag}` : ''}`) || j.tag === 'src' || (j.family === 'avc' && j.label === '1080p'));
     if (quick.length) jobs = quick;
@@ -384,7 +390,8 @@ async function main() {
     const first = jobs.find((j) => j.family === fam);
     if (first) first.best = true;
   }
-  for (const j of jobs) if (j.tag === 'hq') j.best = true;
+  // Sharpest settings for HQ, and for Lite (at a low bitrate, encoder effort shows the most).
+  for (const j of jobs) if (j.tag === 'hq' || j.tag === 'lite') j.best = true;
 
   // Make the version people will actually watch first, so the movie is watchable
   // while the backup versions are still being made.
@@ -414,7 +421,7 @@ async function main() {
     const height = even((job.width * srcH) / srcW);
     const width = even(job.width);
     if (fs.existsSync(path.join(dir, '.done')) && fs.existsSync(path.join(dir, 'init.mp4'))) {
-      console.log(`  ${(job.label + (job.tag ? ' HQ' : '') + ' ' + job.family.toUpperCase()).padEnd(14)} already done, skipping`);
+      console.log(`  ${(job.label + (job.tag === 'hq' ? ' HQ' : job.tag === 'lite' ? ' Lite' : '') + ' ' + job.family.toUpperCase()).padEnd(14)} already done, skipping`);
     } else {
       fs.rmSync(dir, { recursive: true, force: true });
       fs.mkdirSync(dir, { recursive: true });
@@ -437,7 +444,7 @@ async function main() {
         '-hls_segment_filename', 'seg_%05d.m4s',
         'index.m3u8',
       ];
-      await runFfmpeg(args, duration, `${job.label}${job.tag ? ' HQ' : ''} ${job.family.toUpperCase()}`, dir);
+      await runFfmpeg(args, duration, `${job.label}${job.tag === 'hq' ? ' HQ' : job.tag === 'lite' ? ' Lite' : ''} ${job.family.toUpperCase()}`, dir);
       if (!fs.existsSync(path.join(dir, 'init.mp4'))) throw new Error(`FFmpeg didn't create ${path.join(dir, 'init.mp4')}`);
       fs.writeFileSync(path.join(dir, '.done'), new Date().toISOString());
     }
@@ -472,7 +479,7 @@ async function main() {
   emit({ done: true, id, title, gb: totalGb });
   console.log(`\nDone! "${title}" is ready in Movie Night (${totalGb.toFixed(1)} GB on disk).`);
   for (const r of [...done.hevc, ...done.avc]) {
-    const name = r.label + (r.dir.includes('-hq_') ? ' HQ' : '');
+    const name = r.label + (r.dir.includes('-hq_') ? ' HQ' : r.dir.includes('-lite_') ? ' Lite' : '');
     console.log(`  ${name.padEnd(8)} ${r.dir.endsWith('hevc') ? 'HEVC ' : 'H.264'}  avg ${(r.avg / 1e6).toFixed(1)} Mbps`);
   }
 }

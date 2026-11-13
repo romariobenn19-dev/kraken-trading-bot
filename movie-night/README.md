@@ -61,7 +61,7 @@ In Movie Night on your laptop, click **＋ Add movie**:
 - Check the title. It's tidied automatically, e.g. "Resident.Evil.2026.REPACK.1080p…" becomes "Resident Evil (2026)".
 - Optional: **Clean up film grain**, for older or grainy films, so they look sharper.
 - Optional: **Skip H.264 backups**, about a third faster. The app checks every device you two use (her tablet, your phone, the laptop's browser) and ticks this for you only when all of them can play HEVC.
-- **Quick** (ticked by default): only makes the versions her tablet uses. Untick it if you also want 4K / 1440p versions.
+- **Quick** (ticked by default): only makes the versions her tablet uses: 1080p HQ, 1080p, **1080p Lite** (full 1080p at about 1.6 Mbps, so slow Wi-Fi can stay at 1080p) and 480p. Untick it if you also want 4K / 1440p versions.
 - Click **Prepare movie**. The version she watches is made first, and **the movie appears on both screens as soon as that's done**, roughly 10–15 minutes for a 1h30 film. The backup versions (used if her Wi-Fi dips) keep going in the background; the card says "finishing backups…" until they're done.
 
 Good to know:

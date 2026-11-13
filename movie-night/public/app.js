@@ -469,8 +469,9 @@ function rememberBandwidth() {
 function labelFor(lv) {
   const name = lv.height >= 2000 || lv.width >= 3800 ? '2160p' : lv.width >= 2500 ? '1440p' : lv.width >= 1900 ? '1080p'
     : lv.width >= 1260 ? '720p' : lv.width >= 840 ? '480p' : '360p';
-  const hq = name === '1080p' && String(lv.uri || [].concat(lv.url || [])[0] || '').includes('-hq_') ? ' HQ' : '';
-  return `${name}${hq} · ${((lv.averageBitrate || lv.bitrate) / 1e6).toFixed(1)} Mbps`;
+  const uri = String(lv.uri || [].concat(lv.url || [])[0] || '');
+  const tag = name === '1080p' ? (uri.includes('-hq_') ? ' HQ' : uri.includes('-lite_') ? ' Lite' : '') : '';
+  return `${name}${tag} · ${((lv.averageBitrate || lv.bitrate) / 1e6).toFixed(1)} Mbps`;
 }
 
 function updateQualityLabel() {
@@ -1400,9 +1401,10 @@ function tuneAbrForBuffer() {
   const levels = hls.levels;
   const top = hls.autoLevelCapping >= 0 ? hls.autoLevelCapping : levels.length - 1;
   const firstAtLeast = (w) => { const i = levels.findIndex((l) => l.width >= w); return i < 0 ? top : Math.min(i, top); };
-  let floor = ahead > 90 ? firstAtLeast(1900) : ahead > 45 ? firstAtLeast(1260) : 0;
-  // Only hold a floor the connection can actually keep up with at its slowest lately.
-  while (floor > 0 && levelRate(floor) * 1.2 > safeBandwidth()) floor--;
+  // Stay at 1080p (at least the Lite version) as long as there's a safe cushion loaded.
+  // Only if the cushion drops under ~12 s may it step down, so it never runs dry.
+  const lowest1080 = levels.findIndex((l) => l.width >= 1900);
+  let floor = ahead >= 12 && lowest1080 >= 0 ? Math.min(lowest1080, top) : 0;
   hls.config.minAutoBitrate = floor > 0 ? levels[floor].maxBitrate || levels[floor].bitrate : 0;
 }
 
