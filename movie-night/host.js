@@ -15,7 +15,8 @@ const { spawn, spawnSync } = require('child_process');
 
 const VIDEO_EXT = new Set(['.mp4', '.mkv', '.avi', '.mov', '.m4v', '.wmv', '.webm', '.ts', '.m2ts', '.mpg', '.mpeg', '.flv']);
 
-// Files that make up the app; the updater refreshes exactly these.
+// Files that make up the app. The updater also uses the list published in the
+// new version's package.json (movieNight.files), so files added later are never missed.
 const APP_FILES = [
   'server.js', 'host.js', 'prepare.js', 'package.json', 'README.md',
   'launch.vbs', 'setup.bat', 'setup-helper.ps1', 'start-movie-night.bat', 'prepare-movie.bat',
@@ -63,6 +64,11 @@ function compareVersions(a, b) {
     if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
   }
   return 0;
+}
+
+/** Only plain relative paths inside the app folder (no "..", no absolute paths). */
+function isSafeAppPath(f) {
+  return typeof f === 'string' && /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/.test(f) && !f.split('/').includes('..');
 }
 
 function readBody(req, limit = 64 * 1024) {
@@ -263,7 +269,9 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     if (!info.newer) return { ...info, updated: false };
     // Download everything first; only write if every file arrived.
     const files = {};
-    for (const f of APP_FILES) {
+    let remoteList = [];
+    try { remoteList = JSON.parse((await fetchText(rawBase() + 'package.json')).toString('utf8')).movieNight.files || []; } catch { /* older layout */ }
+    for (const f of new Set([...APP_FILES, ...remoteList.filter(isSafeAppPath)])) {
       try { files[f] = await fetchText(rawBase() + f); } catch (e) {
         if (/^404/.test(e.message)) continue; // file not in this version
         throw e;
@@ -358,7 +366,28 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     }
   }
 
-  return { handle, onStatus, publicJobs, isBusy: () => !!running, ffmpeg: FFMPEG };
+  /** On startup: if any app file is missing (e.g. an interrupted update), fetch it from GitHub. */
+  async function repairMissing() {
+    let list = APP_FILES;
+    try { list = [...new Set([...APP_FILES, ...(JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).movieNight.files || [])])]; } catch { /* ignore */ }
+    const missing = list.filter((f) => isSafeAppPath(f) && !fs.existsSync(path.join(ROOT, f)));
+    if (!missing.length || !src().repo) return [];
+    const fixed = [];
+    for (const f of missing) {
+      try {
+        const data = await fetchText(rawBase() + f);
+        const target = path.join(ROOT, f);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        const out = /\.(bat|cmd|vbs|ps1)$/i.test(f) ? Buffer.from(data.toString('utf8').replace(/\r?\n/g, '\r\n')) : data;
+        fs.writeFileSync(target, out);
+        fixed.push(f);
+      } catch (e) { console.log(`  Could not restore ${f}: ${e.message}`); }
+    }
+    if (fixed.length) console.log(`  Restored missing files: ${fixed.join(', ')}`);
+    return fixed;
+  }
+
+  return { handle, onStatus, publicJobs, repairMissing, isBusy: () => !!running, ffmpeg: FFMPEG };
 };
 
 module.exports.cleanTitle = cleanTitle;

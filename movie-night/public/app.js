@@ -2,6 +2,15 @@
 'use strict';
 
 const $ = (id) => document.getElementById(id);
+
+// If the artwork file is missing (e.g. an interrupted update), keep working with plain emojis.
+if (!window.Art) {
+  const blank = () => '';
+  window.Art = {
+    head: blank, bowSvg: blank, scene: blank, couple: blank, fetchingPup: blank, reaction: blank,
+    SCENES: [], REACTIONS: [], fallback: true,
+  };
+}
 const video = $('video');
 
 // ---- Identity ---------------------------------------------------------------
@@ -111,7 +120,8 @@ async function refreshMovies() {
     b.innerHTML = `<div class="poster"></div><div class="meta"><b></b><span></span></div>`;
     const poster = b.querySelector('.poster');
     if (mv.poster) poster.style.backgroundImage = `url("/library/${encodeURIComponent(mv.id)}/${mv.poster}")`;
-    else poster.innerHTML = Art.scene(Art.SCENES[movies.indexOf(mv) % Art.SCENES.length]);
+    else if (Art.SCENES.length) poster.innerHTML = Art.scene(Art.SCENES[movies.indexOf(mv) % Art.SCENES.length]);
+    else poster.textContent = '🎞️';
     b.insertAdjacentHTML('beforeend', `<span class="card-bow">${Art.bowSvg()}</span>`);
     b.querySelector('b').textContent = mv.title;
     b.querySelector('span').textContent = `${fmt(mv.duration)} · up to ${best}${mv.subtitles ? ' · CC' : ''}`;
@@ -436,12 +446,13 @@ $('fsBtn').onclick = async () => {
 
 // Reactions are little cartoon versions of us.
 const REACT_LABELS = { love: 'Heart eyes', laugh: 'Laughing', cry: 'Crying', shock: 'Shocked pup', kiss: 'Kiss' };
-for (const key of Art.REACTIONS) {
+const FALLBACK_REACTS = { love: '😍', laugh: '😂', cry: '😭', shock: '😮', kiss: '😘' };
+for (const key of (Art.fallback ? Object.keys(FALLBACK_REACTS) : Art.REACTIONS)) {
   const b = document.createElement('button');
   b.className = 'react';
   b.title = REACT_LABELS[key] || key;
   b.setAttribute('aria-label', b.title);
-  b.innerHTML = Art.reaction(key);
+  if (Art.fallback) { b.textContent = FALLBACK_REACTS[key]; b.style.fontSize = '24px'; } else b.innerHTML = Art.reaction(key);
   b.onclick = (e) => { e.stopPropagation(); send({ t: 'react', emoji: key }); };
   $('reacts').appendChild(b);
 }
@@ -452,7 +463,7 @@ function floatEmoji(key, from) {
   const face = document.createElement('div');
   face.className = 'face';
   if (Art.REACTIONS.includes(key)) face.innerHTML = Art.reaction(key);
-  else { face.textContent = key; face.style.cssText = 'font-size:52px;display:grid;place-items:center'; }
+  else { face.textContent = (typeof FALLBACK_REACTS !== 'undefined' && FALLBACK_REACTS[key]) || key; face.style.cssText = 'font-size:52px;display:grid;place-items:center'; }
   el.appendChild(face);
   const s = document.createElement('small');
   s.textContent = from;
@@ -743,6 +754,7 @@ function polaroid(inner, caption, i) {
 }
 
 function collageItems() {
+  if (!Art.SCENES.length && !personalInfo.photos.length) return [];
   const items = Art.SCENES.map((n) => ({ html: Art.scene(n), cap: CAPTIONS[n] || '' }));
   // Mix in your real photos (from the private personal\photos folder on the laptop).
   const photos = personalInfo.photos.map((src) => ({ html: `<img src="${src}" alt="" loading="lazy">`, cap: '♡' }));
@@ -763,7 +775,7 @@ function drawArt() {
   const items = collageItems();
   // Join screen: a wall of polaroids.
   const wall = [];
-  for (let i = 0; i < 18; i++) wall.push(polaroid(items[i % items.length].html, items[i % items.length].cap, i));
+  for (let i = 0; i < (items.length ? 18 : 0); i++) wall.push(polaroid(items[i % items.length].html, items[i % items.length].cap, i));
   $('joinCollage').innerHTML = wall.join('');
   // Library: a slowly drifting strip (doubled so it loops seamlessly).
   const strip = items.map((it, i) => polaroid(it.html, it.cap, i)).join('');

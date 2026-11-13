@@ -492,4 +492,5 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`\n  Movies: ${listMovies().length} ready in ${LIBRARY}`);
   console.log('  Everything else - adding movies, her link, updates - is in the app.\n');
   if (ARGS.has('--open')) openBrowser(l.host);
+  host.repairMissing().then((fixed) => { if (fixed.length) broadcast({ t: 'library' }); }).catch(() => {});
 });
