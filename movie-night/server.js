@@ -704,6 +704,11 @@ function openBrowser(url) {
 
 /** Restart after an update: hand over to a fresh copy of the server. */
 // Exit codes understood by start-movie-night.bat
+// Keep idle connections open longer than browsers do: otherwise a click right after a pause
+// can land on a connection the server is just closing, and the browser says "Failed to fetch".
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;
+
 const EXIT_RESTART = 75;      // "start me again" (after an update)
 const EXIT_ALREADY_RUNNING = 3;
 

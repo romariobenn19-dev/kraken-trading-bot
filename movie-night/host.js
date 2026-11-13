@@ -97,6 +97,13 @@ function json(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
+/** Stop a conversion and its FFmpeg (on Windows, killing node alone leaves FFmpeg running). */
+function killTree(proc) {
+  if (!proc || proc.exitCode !== null) return;
+  if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { windowsHide: true });
+  else proc.kill();
+}
+
 module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendToHosts, libraryChanged, links, onMovieDeleted, restart, savePersonal, openPhotosFolder, httpsStatus, retryHttps, tmdb, onMovieReady }) {
   const FFMPEG = findTool('ffmpeg');
   const FFPROBE = findTool('ffprobe');
@@ -246,7 +253,7 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     if (job.status === 'queued') job.status = 'cancelled';
     else if (job.status === 'running' && job.proc) {
       job.status = 'cancelled';
-      job.proc.kill();
+      killTree(job.proc);
     }
     pushJobs(true);
     libraryChanged();
@@ -335,7 +342,6 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
   }
 
   async function applyUpdate() {
-    if (runningJobs.size) throw new Error('A movie is still converting. Try again when it has finished.');
     const info = await checkUpdate();
     if (!info.newer) return { ...info, updated: false };
     // Download everything first; only write if every file arrived.
@@ -366,9 +372,11 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
       if (!(await replaceFile(path.join(ROOT, f) + '.new', path.join(ROOT, f)))) stuck.push(f);
     }
     if (stuck.length) {
+      pauseQueueForRestart();
       setTimeout(restart, 300); // the next start finishes the swap (nothing holds the files then)
       return { ...info, updated: true, finishing: stuck };
     }
+    pauseQueueForRestart();
     const newDeps = JSON.stringify(JSON.parse(files['package.json'].toString('utf8')).dependencies);
     if (newDeps !== oldDeps) {
       const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
@@ -417,6 +425,9 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
           return json(res, 400, { error: 'That file isn\'t a movie I can read.' });
         }
         const title = String(body.title || '').trim().slice(0, 120) || cleanTitle(file);
+        // Already on its way (e.g. the button was pressed twice): don't convert it twice.
+        const same = jobs.find((j) => j.file === file && j.phase === 'watch' && (j.status === 'queued' || j.status === 'running'));
+        if (same) return json(res, 200, { id: same.id });
         const job = enqueue({ file, title, denoise: body.denoise, skipAvc: body.skipAvc, quick: body.quick !== false,
           subtitles: Array.isArray(body.subtitles) ? subtitles.sanitizeItems(body.subtitles) : null });
         return json(res, 200, { id: job.id });
@@ -552,6 +563,18 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     return fixed;
   }
 
+  /** Stop the conversions (they'd hold files and fight the new version) and remember the queue. */
+  const QUEUE_FILE = path.join(ROOT, 'queue.json');
+  function pauseQueueForRestart() {
+    const keep = jobs.filter((j) => j.status === 'queued' || j.status === 'running')
+      .map(({ file, title, denoise, skipAvc, skipHevc, quick, subtitles: subs, auto, phase }) => ({ file, title, denoise, skipAvc, skipHevc, quick, subtitles: subs, auto, phase }));
+    try { fs.writeFileSync(QUEUE_FILE, JSON.stringify(keep)); } catch { /* best effort */ }
+    for (const j of jobs) {
+      if (j.status === 'queued') j.status = 'cancelled';
+      if (j.status === 'running' && j.proc) { j.status = 'cancelled'; killTree(j.proc); }
+    }
+  }
+
   /** The last problem written to error.log in the past day (shown once in the laptop's app). */
   function recentError() {
     try {
@@ -588,6 +611,12 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
       } catch { /* not a movie folder, or no original file: leave it */ }
     }
   }
+  // Conversions stopped by an update carry on after the restart (before the top-up check).
+  try {
+    const saved = JSON.parse(fs.readFileSync(QUEUE_FILE, 'utf8'));
+    fs.rmSync(QUEUE_FILE, { force: true });
+    for (const j of saved) if (j.file && fs.existsSync(j.file)) enqueue(j);
+  } catch { /* nothing saved */ }
   setTimeout(topUpOldMovies, 20000).unref();
 
   return { handle, onStatus, publicJobs, repairMissing, prioritize, pendingMovies, isBusy: () => runningJobs.size > 0, ffmpeg: FFMPEG };

@@ -841,11 +841,15 @@ function onWelcome(m) {
 
 async function api(path, body) {
   let r;
-  try {
-    r = await fetch(path, body === undefined ? { cache: 'no-store' } : {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-    });
-  } catch {
+  const go = () => fetch(path, body === undefined ? { cache: 'no-store' } : {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  try { r = await go(); } catch {
+    // One retry: a connection dropping at the wrong moment is the usual cause.
+    await new Promise((res) => setTimeout(res, 800));
+    try { r = await go(); } catch { r = null; }
+  }
+  if (!r) {
     throw new Error("Can't reach Movie Night on this laptop. It may have stopped: click the Movie Night icon on your desktop.");
   }
   const data = await r.json().catch(() => ({}));
