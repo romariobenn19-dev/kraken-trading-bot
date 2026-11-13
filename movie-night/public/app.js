@@ -882,9 +882,17 @@ async function deleteMovie(mv) {
 }
 
 // Conversion progress
-function renderJobs(jobs) {
+let jobsExpanded = false;
+let lastJobs = [];
+function renderJobs(allJobs) {
+  lastJobs = allJobs;
   const box = $('jobs');
   box.innerHTML = '';
+  // Keep the home screen tidy: show what's converting now (and recent problems); fold the rest.
+  const recent = (j) => j.finishedAt && Date.now() - j.finishedAt < 60000;
+  const important = allJobs.filter((j) => j.status === 'running' || j.status === 'failed' || ((j.status === 'done' || j.status === 'cancelled') && recent(j)));
+  const waiting = allJobs.filter((j) => j.status === 'queued');
+  const jobs = jobsExpanded ? allJobs.filter((j) => j.status !== 'done' && j.status !== 'cancelled' || recent(j)) : important;
   for (const j of jobs) {
     const el = document.createElement('div');
     el.className = `job ${j.status}`;
@@ -920,7 +928,21 @@ function renderJobs(jobs) {
     if (j.error) el.querySelector('pre').textContent = j.error;
     box.appendChild(el);
   }
+  renderJobsSummary(waiting);
 }
+
+function renderJobsSummary(waiting) {
+  if (!waiting.length) return;
+  const line = document.createElement('button');
+  line.className = 'jobs-more';
+  const watch = waiting.filter((j) => j.phase !== 'backups').length;
+  const backups = waiting.length - watch;
+  line.textContent = jobsExpanded ? 'Show less'
+    : `${[watch ? `${watch} more waiting` : '', backups ? `${backups} backup${backups === 1 ? '' : 's'} to make` : ''].filter(Boolean).join(' · ')} · show`;
+  line.onclick = () => { jobsExpanded = !jobsExpanded; renderJobs(lastJobs); };
+  $('jobs').appendChild(line);
+}
+setInterval(() => { if (lastJobs.some((j) => j.finishedAt && Date.now() - j.finishedAt < 70000)) renderJobs(lastJobs); }, 15000);
 
 // File picker
 $('addMovieBtn').onclick = () => openPicker('movie');
