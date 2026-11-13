@@ -53,7 +53,6 @@ const AVC_LADDER = [
   { label: '1080p', width: 1920, kbps: 5000, codec: 'avc1.640028' },
   { label: '720p',  width: 1280, kbps: 2500, codec: 'avc1.64001f' },
   { label: '480p',  width: 854,  kbps: 1100, codec: 'avc1.64001e' },
-  { label: '360p',  width: 640,  kbps: 600,  codec: 'avc1.64001e' },
 ];
 const LABEL_HEIGHT = { '2160p': 2160, '1440p': 1440, '1080p': 1080, '720p': 720, '480p': 480, '360p': 360 };
 
@@ -159,29 +158,33 @@ function pickEncoders(choice) {
   return { name: 'cpu', ...families.cpu };
 }
 
-function videoCodecArgs(encName, codecFamily, kbps, gop) {
+/**
+ * `best` = the version people will actually watch: slowest, sharpest settings.
+ * Backup versions (only used during Wi-Fi dips) use faster settings - roughly 2-3x quicker.
+ */
+function videoCodecArgs(encName, codecFamily, kbps, gop, best) {
   const b = `${kbps}k`, max = `${Math.round(kbps * 1.6)}k`, buf = `${Math.round(kbps * 2)}k`;
   const rate = ['-b:v', b, '-maxrate', max, '-bufsize', buf];
   const hevc = codecFamily === 'hevc';
   const tag = hevc ? ['-tag:v', 'hvc1'] : [];
   switch (encName) {
     case 'nvenc':
-      return ['-c:v', hevc ? 'hevc_nvenc' : 'h264_nvenc', '-preset', 'p7', '-tune', 'hq', '-rc', 'vbr',
-        '-multipass', 'fullres', '-spatial-aq', '1', '-rc-lookahead', '32', '-forced-idr', '1',
+      return ['-c:v', hevc ? 'hevc_nvenc' : 'h264_nvenc', '-preset', best ? 'p7' : 'p4', '-tune', 'hq', '-rc', 'vbr',
+        '-multipass', best ? 'fullres' : 'disabled', '-spatial-aq', '1', '-rc-lookahead', best ? '32' : '16', '-forced-idr', '1',
         '-profile:v', hevc ? 'main' : 'high', '-g', String(gop), ...rate, ...tag];
     case 'amf':
-      return ['-c:v', hevc ? 'hevc_amf' : 'h264_amf', '-quality', 'quality', '-rc', 'vbr_peak',
+      return ['-c:v', hevc ? 'hevc_amf' : 'h264_amf', '-quality', best ? 'quality' : 'balanced', '-rc', 'vbr_peak',
         '-profile:v', 'main', '-g', String(gop), ...rate, ...tag].map((v) =>
         (!hevc && v === 'main') ? 'high' : v);
     case 'qsv':
-      return ['-c:v', hevc ? 'hevc_qsv' : 'h264_qsv', '-preset', 'slower', '-profile:v', hevc ? 'main' : 'high',
+      return ['-c:v', hevc ? 'hevc_qsv' : 'h264_qsv', '-preset', best ? 'slower' : 'medium', '-profile:v', hevc ? 'main' : 'high',
         '-g', String(gop), ...rate, ...tag];
     default:
       if (hevc) {
-        return ['-c:v', 'libx265', '-preset', 'medium', '-profile:v', 'main', ...rate, ...tag,
+        return ['-c:v', 'libx265', '-preset', best ? 'medium' : 'fast', '-profile:v', 'main', ...rate, ...tag,
           '-x265-params', `keyint=${gop}:min-keyint=${gop}:open-gop=0:scenecut=0:log-level=error`];
       }
-      return ['-c:v', 'libx264', '-preset', 'slow', '-profile:v', 'high', ...rate,
+      return ['-c:v', 'libx264', '-preset', best ? 'slow' : 'fast', '-profile:v', 'high', ...rate,
         '-g', String(gop), '-keyint_min', String(gop), '-sc_threshold', '0'];
   }
 }
@@ -309,6 +312,13 @@ async function main() {
     if (opts.avc) jobs.push({ ...AVC_LADDER[AVC_LADDER.length - 1], width: w, family: 'avc' });
   }
 
+  // Sharpest (slowest) settings for the top version of each kind and for 1080p HQ; faster for backups.
+  for (const fam of ['hevc', 'avc']) {
+    const first = jobs.find((j) => j.family === fam);
+    if (first) first.best = true;
+  }
+  for (const j of jobs) if (j.tag === 'hq') j.best = true;
+
   const done = { hevc: [], avc: [] };
   for (const job of jobs) {
     const dirName = `${job.label}${job.tag ? `-${job.tag}` : ''}_${job.family}`;
@@ -328,7 +338,7 @@ async function main() {
         ...(audio ? ['-map', `0:${audio.index}`] : []),
         '-vf', vf,
         ...(isHdr && toneMap ? ['-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709'] : []),
-        ...videoCodecArgs(enc.name, job.family, job.kbps, gop),
+        ...videoCodecArgs(enc.name, job.family, job.kbps, gop, job.best),
         '-force_key_frames', `expr:gte(t,n_forced*${SEGMENT_SECONDS})`,
         ...(audio ? ['-c:a', 'aac', '-b:a', '160k', '-ac', '2', '-ar', '48000'] : []),
         '-sn', '-dn', '-map_metadata', '-1', '-map_chapters', '-1',
