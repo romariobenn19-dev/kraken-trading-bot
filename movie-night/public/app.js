@@ -1,6 +1,123 @@
 /* Movie Night - web player (runs on both the host laptop and the partner's tablet). */
 'use strict';
 
+/**
+ * Fetches each video chunk as several byte ranges in parallel.
+ * Over long distances (e.g. Barbados -> Greece) a single connection rarely reaches the
+ * line's real speed; 4 parallel ones get much closer. Falls back to one request if the
+ * server doesn't do ranges. Plugs into hls.js as its fragment loader.
+ */
+class ParallelFragmentLoader {
+  constructor() {
+    this.controllers = [];
+    this.stats = {
+      aborted: false, loaded: 0, retry: 0, total: 0, chunkCount: 0, bwEstimate: 0,
+      loading: { start: 0, first: 0, end: 0 }, parsing: { start: 0, end: 0 }, buffering: { start: 0, first: 0, end: 0 },
+    };
+  }
+
+  destroy() { this.abortAll(); }
+
+  abortAll() { for (const c of this.controllers) c.abort(); this.controllers = []; clearTimeout(this.timer); }
+
+  abort() {
+    this.stats.aborted = true;
+    this.abortAll();
+    if (this.callbacks && this.callbacks.onAbort) this.callbacks.onAbort(this.stats, this.context, null);
+  }
+
+  load(context, config, callbacks) {
+    this.context = context;
+    this.callbacks = callbacks;
+    const stats = this.stats;
+    stats.loading.start = performance.now();
+    const timeout = (config && (config.loadPolicy ? config.loadPolicy.maxLoadTimeMs : config.timeout)) || 90000;
+    this.timer = setTimeout(() => { this.abortAll(); callbacks.onTimeout(stats, context, null); }, timeout);
+    this.run(context, callbacks).catch((err) => {
+      if (stats.aborted) return;
+      clearTimeout(this.timer);
+      callbacks.onError({ code: err.status || 0, text: err.message || 'load failed' }, context, null, stats);
+    });
+  }
+
+  /** One ranged request; streams into `into` at `offset`, counting progress for the ABR. */
+  async part(url, start, end, onHeaders, into) {
+    const ctrl = new AbortController();
+    this.controllers.push(ctrl);
+    const r = await fetch(url, { headers: { Range: `bytes=${start}-${end}` }, signal: ctrl.signal, credentials: 'same-origin' });
+    if (!r.ok) { const e = new Error(`HTTP ${r.status}`); e.status = r.status; throw e; }
+    const info = onHeaders(r);
+    const target = into || info.buffer;
+    let pos = info.offset;
+    const reader = r.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!this.stats.loading.first) this.stats.loading.first = performance.now();
+      if (target && pos + value.length <= target.length) target.set(value, pos);
+      else info.overflow.push(value);
+      pos += value.length;
+      this.stats.loaded += value.length;
+    }
+    return { r, pos };
+  }
+
+  async run(context, callbacks) {
+    const url = context.url;
+    const FIRST = 384 * 1024;
+    const PARALLEL = 4;
+    let total = 0;
+    let buffer = null;
+    const overflow = [];
+    // First request: the start of the file, which also tells us the full size.
+    const first = this.part(url, 0, FIRST - 1, (r) => {
+      const cr = r.headers.get('Content-Range');
+      total = cr ? Number(cr.split('/')[1]) : Number(r.headers.get('Content-Length')) || 0;
+      if (r.status === 200 || !total) total = 0; // no range support: whole file in one go
+      buffer = total ? new Uint8Array(total) : null;
+      this.stats.total = total;
+      return { buffer, offset: 0, overflow };
+    });
+    // Wait just for the headers of the first request before starting the others.
+    const firstDone = first;
+    await new Promise((resolve) => {
+      const check = () => (buffer || total === 0 && this.stats.loading.first ? resolve() : setTimeout(check, 5));
+      check();
+      firstDone.then(resolve, resolve);
+    });
+    const parts = [firstDone];
+    if (buffer && total > FIRST) {
+      const rest = total - FIRST;
+      const size = Math.ceil(rest / (PARALLEL - 1));
+      for (let start = FIRST; start < total; start += size) {
+        const end = Math.min(total - 1, start + size - 1);
+        parts.push(this.part(url, start, end, () => ({ buffer, offset: start, overflow: [] }), buffer));
+      }
+    }
+    const results = await Promise.all(parts);
+    clearTimeout(this.timer);
+    let data;
+    if (buffer) data = buffer.buffer;
+    else {
+      // Server sent the whole file in one response.
+      const len = overflow.reduce((n, c) => n + c.length, 0);
+      const all = new Uint8Array(len);
+      let o = 0;
+      for (const c of overflow) { all.set(c, o); o += c.length; }
+      data = all.buffer;
+      this.stats.total = len;
+    }
+    const stats = this.stats;
+    stats.loading.end = performance.now();
+    if (!stats.loading.first) stats.loading.first = stats.loading.end;
+    stats.total = stats.total || stats.loaded;
+    callbacks.onSuccess({ url: results[0].r.url || url, data }, stats, context, null);
+  }
+
+  getCacheAge() { return null; }
+  getResponseHeader() { return null; }
+}
+
 const $ = (id) => document.getElementById(id);
 
 // If the artwork file is missing (e.g. an interrupted update), keep working with plain emojis.
@@ -224,6 +341,8 @@ async function openMovie(id) {
       // Forget a bad patch quickly so the picture climbs back up once Wi-Fi recovers.
       abrEwmaFastVoD: 3,
       abrEwmaSlowVoD: 8,
+      // Long-distance links: fetch each chunk over several connections at once.
+      fLoader: ParallelFragmentLoader,
       fragLoadPolicy: {
         default: {
           maxTimeToFirstByteMs: 15000,
@@ -431,6 +550,7 @@ function reportStatus() {
   if (!meta) { send({ t: 'status', movieId: null, visible }); return; }
   maybeUpgradeBuffered();
   rememberBandwidth();
+  tuneAbrForBuffer();
   // During a quality upgrade the buffer is briefly short on purpose; real stalls still report via 'waiting'.
   const ahead = Date.now() < upgradeGraceUntil ? Math.max(bufferAhead(), 5) : bufferAhead();
   const dur = video.duration || meta.duration || 0;
@@ -1237,3 +1357,14 @@ $('subsAdd').onclick = async () => {
   } catch (e) { toast(e.message, 7000); }
   finally { $('subsAdd').disabled = false; $('subsAdd').textContent = 'Add subtitles'; }
 };
+
+/**
+ * With minutes already loaded, it's safe to aim higher: be braver about switching up
+ * the more buffer there is (a dip can't cause a pause before quality drops back).
+ */
+function tuneAbrForBuffer() {
+  if (!hls) return;
+  const ahead = bufferAhead();
+  hls.config.abrBandWidthUpFactor = ahead > 90 ? 0.95 : ahead > 45 ? 0.85 : 0.7;
+  hls.config.abrBandWidthFactor = ahead > 90 ? 1.0 : ahead > 45 ? 0.9 : 0.8;
+}

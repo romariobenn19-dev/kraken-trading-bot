@@ -371,9 +371,9 @@ async function main() {
     if (opts.hevc) jobs.unshift({ ...nativeJob, kbps: hevcKbps, codec: 'hvc1.1.6.L93.90', family: 'hevc' });
   }
 
-  // Quick: only what a 1080p screen actually uses.
+  // Quick: only what a 1080p screen actually uses (1080p HQ, a lighter 1080p for slower links, 720p, 480p).
   if (opts.quick) {
-    const QUICK = new Set(['1080p-hq', '720p', '480p']);
+    const QUICK = new Set(['1080p-hq', '1080p', '720p', '480p']);
     // (1080p H.264 stays: it's what a tablet without HEVC would watch.)
     const quick = jobs.filter((j) => QUICK.has(`${j.label}${j.tag ? `-${j.tag}` : ''}`) || j.tag === 'src' || (j.family === 'avc' && j.label === '1080p'));
     if (quick.length) jobs = quick;
