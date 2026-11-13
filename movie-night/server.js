@@ -48,6 +48,23 @@ const createTmdb = require('./tmdb');
 
 const ROOT = __dirname;
 
+// A bug somewhere must never take the whole app down (every button would then say
+// "Failed to fetch"). Write it to error.log, keep running; the laptop's app shows it.
+const ERROR_LOG = path.join(ROOT, 'error.log');
+function logCrash(kind, err) {
+  const text = `[${new Date().toISOString()}] ${kind}: ${(err && err.stack) || err}\n`;
+  console.error(text);
+  try {
+    let old = ''; try { old = fs.readFileSync(ERROR_LOG, 'utf8').slice(-20000); } catch { /* none yet */ }
+    fs.writeFileSync(ERROR_LOG, old + text);
+  } catch { /* nowhere to write */ }
+}
+process.on('uncaughtException', (err) => {
+  logCrash('error', err);
+  if (err && err.code === 'EADDRINUSE') process.exit(1); // can't run at all: let startup handle it
+});
+process.on('unhandledRejection', (err) => logCrash('unhandled', err));
+
 
 const PUBLIC = path.join(ROOT, 'public');
 const LIBRARY = process.env.LIBRARY || path.join(ROOT, 'library');

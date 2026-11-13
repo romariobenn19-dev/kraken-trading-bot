@@ -566,3 +566,7 @@ textarea#noteText { background: var(--bg); border: 1px solid var(--line); border
 
 .jobs-more { justify-self: start; border: 1px dashed var(--line); background: var(--panel); border-radius: 999px; padding: 6px 14px; cursor: pointer;
   color: var(--muted); font-size: 13px; font-weight: 700; }
+
+.error-note { position: fixed; left: 16px; right: 16px; bottom: 16px; z-index: 9999; max-width: 760px; margin: 0 auto;
+  background: #fff8f0; color: #4a3428; border: 2px solid #c98a8a; border-radius: 16px; padding: 14px 16px; box-shadow: 0 10px 30px rgba(0,0,0,.2); }
+.error-note pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; max-height: 40vh; overflow: auto; background: #f3e8dc; padding: 8px; border-radius: 8px; }

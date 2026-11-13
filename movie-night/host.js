@@ -385,7 +385,7 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
         return json(res, 200, {
           version: version(), links: links(), https: httpsStatus(), ...hevcDevices(), tmdbKey: tmdb && tmdb.hasKey(),
           ffmpegFound: !spawnSync(FFMPEG, ['-version'], { windowsHide: true }).error,
-          freeGb: freeSpaceGb(LIBRARY), watchFolder: watcher.folder(),
+          freeGb: freeSpaceGb(LIBRARY), watchFolder: watcher.folder(), recentError: recentError(),
         });
       }
       if (req.method === 'GET' && pathname === '/api/host/browse') {
@@ -550,6 +550,17 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     }
     if (fixed.length) console.log(`  Restored missing files: ${fixed.join(', ')}`);
     return fixed;
+  }
+
+  /** The last problem written to error.log in the past day (shown once in the laptop's app). */
+  function recentError() {
+    try {
+      const f = path.join(ROOT, 'error.log');
+      const st = fs.statSync(f);
+      if (Date.now() - st.mtimeMs > 86400000) return null;
+      const all = fs.readFileSync(f, 'utf8').trim().split(/\n(?=\[\d{4}-)/);
+      return { at: st.mtimeMs, text: all[all.length - 1].slice(0, 700) };
+    } catch { return null; }
   }
 
   /**

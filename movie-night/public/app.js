@@ -840,9 +840,14 @@ function onWelcome(m) {
 }
 
 async function api(path, body) {
-  const r = await fetch(path, body === undefined ? { cache: 'no-store' } : {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-  });
+  let r;
+  try {
+    r = await fetch(path, body === undefined ? { cache: 'no-store' } : {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+  } catch {
+    throw new Error("Can't reach Movie Night on this laptop. It may have stopped: click the Movie Night icon on your desktop.");
+  }
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || `Something went wrong (${r.status})`);
   return data;
@@ -856,7 +861,20 @@ async function loadHostInfo() {
     renderHttpsNote();
     if (hostInfo.watchFolder) { $('watchPath').textContent = hostInfo.watchFolder; $('watchRow').classList.remove('hidden'); }
     if (!hostInfo.ffmpegFound) toast('FFmpeg is missing — run setup.bat once so movies can be prepared.', 8000);
+    showRecentError(hostInfo.recentError);
   } catch (e) { toast(e.message); }
+}
+
+/** A problem was caught on the laptop: show it once so it can be screenshotted and fixed. */
+function showRecentError(e) {
+  if (!e || String(e.at) === store.get('mn_errSeen')) return;
+  store.set('mn_errSeen', String(e.at));
+  const box = document.createElement('div');
+  box.className = 'error-note';
+  box.innerHTML = '<b>Movie Night hit a problem (it kept running).</b> Please send a screenshot of this:<pre></pre><button class="ghost small">Close</button>';
+  box.querySelector('pre').textContent = e.text;
+  box.querySelector('button').onclick = () => box.remove();
+  document.body.appendChild(box);
 }
 
 $('copyLink').onclick = async () => {
