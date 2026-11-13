@@ -208,7 +208,7 @@ function videoCodecArgs(encName, codecFamily, kbps, gop, best) {
 
 function even(n) { return Math.max(2, Math.round(n / 2) * 2); }
 
-function runFfmpeg(args, durationSec, label, cwd) {
+function runFfmpeg(args, durationSec, label, cwd, quiet = false) {
   return new Promise((resolve, reject) => {
     const p = spawn(FFMPEG, ['-hide_banner', '-y', '-nostats', '-progress', 'pipe:1', ...args],
       { stdio: ['ignore', 'pipe', 'pipe'], cwd });
@@ -224,7 +224,8 @@ function runFfmpeg(args, durationSec, label, cwd) {
         last = pct;
         const elapsed = (Date.now() - started) / 1000;
         const eta = pct > 0 ? Math.round(elapsed * (100 - pct) / pct) : 0;
-        if (JSON_PROGRESS) emit({ label, pct, eta, step: step.n, steps: step.of });
+        if (quiet) return;
+        if (JSON_PROGRESS) emit({ label, pct, eta, step: Math.max(1, step.n), steps: step.of });
         else process.stdout.write(`\r  ${label.padEnd(14)} ${String(pct).padStart(3)}%  ` +
           (pct > 0 ? `~${fmtDuration(eta)} left   ` : '              '));
       }
@@ -361,6 +362,8 @@ async function main() {
   let jobs = [];
   if (opts.hevc) for (const r of HEVC_LADDER.filter(fits)) jobs.push({ ...r, family: 'hevc' });
   if (opts.avc) for (const r of AVC_LADDER.filter(fits)) jobs.push({ ...r, family: 'avc' });
+  // H.264-only movie: there's no tiny HEVC 360p to fall back on, so add an H.264 one.
+  if (opts.avc && !opts.hevc && srcW >= 700) jobs.push({ label: '360p', width: 640, kbps: 550, codec: 'avc1.64001e', family: 'avc' });
   if (!jobs.length) {
     // Very small source: make a single rendition at native width.
     const w = even(Math.min(srcW, 640));
@@ -385,7 +388,8 @@ async function main() {
   // Quick: only what a 1080p screen actually uses (1080p HQ, 1080p, 1080p Lite for slow links, 480p).
   if (opts.quick) {
     // 1080p Lite uses the same data as 720p but keeps full 1080p, so it replaces 720p here.
-    const QUICK = new Set(['1080p-hq', '1080p', '1080p-lite', '480p']);
+    // 360p is the safety net: tiny (~0.4 Mbps) so even a very poor connection keeps playing.
+    const QUICK = new Set(['1080p-hq', '1080p', '1080p-lite', '480p', '360p']);
     const has1080 = jobs.some((j) => j.label === '1080p');
     if (!has1080) QUICK.add('720p');
     // (1080p H.264 stays: it's what a tablet without HEVC would watch.)
@@ -405,7 +409,11 @@ async function main() {
   // while the backup versions are still being made.
   const watchFirst = jobs.find((j) => j.family === 'hevc' && j.tag === 'hq') || jobs.find((j) => j.family === 'hevc') || jobs[0];
   const avcTop = jobs.find((j) => j.family === 'avc');
-  jobs = [watchFirst, ...(avcTop && avcTop !== watchFirst ? [avcTop] : []), ...jobs.filter((j) => j !== watchFirst && j !== avcTop)];
+  // Safety version: the lightest one, made at the same time as the first so a poor
+  // connection can drop to it instead of pausing, even while the movie is converting.
+  const safety = jobs.filter((j) => j.family === watchFirst.family && j !== watchFirst).sort((a, b) => a.kbps - b.kbps)[0] || null;
+  jobs = [watchFirst, ...(safety ? [safety] : []), ...(avcTop && avcTop !== watchFirst ? [avcTop] : []),
+    ...jobs.filter((j) => j !== watchFirst && j !== avcTop && j !== safety)];
 
   // Poster and subtitles first (seconds), so the movie looks complete the moment it appears.
   const poster = path.join(outDir, 'poster.jpg');
@@ -429,22 +437,24 @@ async function main() {
   const done = { hevc: [], avc: [] };
   const preparedAt = (() => { try { return JSON.parse(fs.readFileSync(path.join(outDir, 'meta.json'), 'utf8')).preparedAt; } catch { return new Date().toISOString(); } })();
   step.of = jobs.length;
-  for (const job of jobs) {
-    step.n++;
-    const dirName = `${job.label}${job.tag ? `-${job.tag}` : ''}_${job.family}`;
+
+  const nameOf = (job) => `${job.label}${job.tag === 'hq' ? ' HQ' : job.tag === 'lite' ? ' Lite' : ''} ${job.family.toUpperCase()}`;
+  const dirOf = (job) => `${job.label}${job.tag ? `-${job.tag}` : ''}_${job.family}`;
+  const sizeOf = (job) => ({ width: even(job.width), height: even((job.width * srcH) / srcW) });
+  const segsIn = (dir) => { try { return (fs.readFileSync(path.join(dir, 'index.m3u8'), 'utf8').match(/#EXTINF/g) || []).length; } catch { return 0; } };
+
+  /** Convert one version. `growing` = written as an event playlist (watchable while converting). */
+  async function encode(job, { growing = false, quiet = false } = {}) {
+    const dirName = dirOf(job);
     const dir = path.join(outDir, dirName);
-    const height = even((job.width * srcH) / srcW);
-    const width = even(job.width);
+    const { width, height } = sizeOf(job);
     if (fs.existsSync(path.join(dir, '.done')) && fs.existsSync(path.join(dir, 'init.mp4'))) {
-      console.log(`  ${(job.label + (job.tag === 'hq' ? ' HQ' : job.tag === 'lite' ? ' Lite' : '') + ' ' + job.family.toUpperCase()).padEnd(14)} already done, skipping`);
+      console.log(`  ${nameOf(job).padEnd(14)} already done, skipping`);
     } else {
       fs.rmSync(dir, { recursive: true, force: true });
       fs.mkdirSync(dir, { recursive: true });
       const denoise = opts.denoise ? 'hqdn3d=1.5:1.5:6:6,' : '';
       const vf = `${denoise}scale=${width}:${height}:flags=lanczos${toneMap},format=yuv420p,setsar=1`;
-      // The first version is written as a growing ("event") playlist so it can be watched
-      // while it's still being made; the others are normal finished playlists.
-      const watchWhileConverting = step.n === 1;
       const args = [
         '-i', opts.input,
         '-map', `0:${video.index}`,
@@ -455,37 +465,52 @@ async function main() {
         '-force_key_frames', `expr:gte(t,n_forced*${SEGMENT_SECONDS})`,
         ...(audio ? ['-c:a', 'aac', '-b:a', '160k', '-ac', '2', '-ar', '48000'] : []),
         '-sn', '-dn', '-map_metadata', '-1', '-map_chapters', '-1',
-        '-f', 'hls', '-hls_time', String(SEGMENT_SECONDS), '-hls_playlist_type', watchWhileConverting ? 'event' : 'vod',
+        '-f', 'hls', '-hls_time', String(SEGMENT_SECONDS), '-hls_playlist_type', growing ? 'event' : 'vod',
         '-hls_segment_type', 'fmp4', '-hls_fmp4_init_filename', 'init.mp4',
         // Relative names + running inside the folder: on Windows FFmpeg otherwise
         // writes init.mp4 to the current folder instead of next to the playlist.
         '-hls_segment_filename', 'seg_%05d.m4s',
         'index.m3u8',
       ];
-      // Publish the movie as soon as ~30 s of it are ready ("watch while it converts").
-      let early = null;
-      if (watchWhileConverting) {
-        const need = Math.max(1, Math.min(EARLY_SEGMENTS, Math.ceil(duration / SEGMENT_SECONDS) - 1));
-        early = setInterval(() => {
-          try {
-            const segs = (fs.readFileSync(path.join(dir, 'index.m3u8'), 'utf8').match(/#EXTINF/g) || []).length;
-            if (segs < need || !fs.existsSync(path.join(dir, 'init.mp4'))) return;
-            clearInterval(early); early = null;
-            publish(false, { dir: dirName, label: job.label, width, height, codec: job.codec, avg: job.kbps * 1000, peak: job.kbps * 1600, family: job.family });
-            console.log('\n  Watchable now - converting ahead of you...');
-          } catch { /* playlist not written yet */ }
-        }, 2000);
-      }
-      try {
-        await runFfmpeg(args, duration, `${job.label}${job.tag === 'hq' ? ' HQ' : job.tag === 'lite' ? ' Lite' : ''} ${job.family.toUpperCase()}`, dir);
-      } finally { if (early) clearInterval(early); }
+      await runFfmpeg(args, duration, nameOf(job), dir, quiet);
       if (!fs.existsSync(path.join(dir, 'init.mp4'))) throw new Error(`FFmpeg didn't create ${path.join(dir, 'init.mp4')}`);
       fs.writeFileSync(path.join(dir, '.done'), new Date().toISOString());
     }
     const m = measureRendition(dir);
     done[job.family].push({ dir: dirName, label: job.label, width, height, codec: job.codec, avg: m.avg, peak: m.peak, bytes: m.bytes });
-    publish(step.n === jobs.length);
-    if (opts.firstOnly && step.n < jobs.length) break; // the app queues the backups for later
+  }
+
+  // Step 1: the version you watch + the safety version, side by side, both watchable while
+  // they convert. The movie is published once both have ~30 s ready.
+  const firstBatch = jobs.slice(0, safety ? 2 : 1);
+  const need = Math.max(1, Math.min(EARLY_SEGMENTS, Math.ceil(duration / SEGMENT_SECONDS) - 1));
+  let early = setInterval(() => {
+    const ready = firstBatch.every((j) => {
+      const dir = path.join(outDir, dirOf(j));
+      return fs.existsSync(path.join(dir, '.done')) || (segsIn(dir) >= need && fs.existsSync(path.join(dir, 'init.mp4')));
+    });
+    if (!ready) return;
+    clearInterval(early); early = null;
+    const growing = firstBatch.filter((j) => !fs.existsSync(path.join(outDir, dirOf(j), '.done')))
+      .map((j) => ({ dir: dirOf(j), label: j.label, ...sizeOf(j), codec: j.codec, avg: j.kbps * 1000, peak: j.kbps * 1600, family: j.family }));
+    if (growing.length) {
+      publish(false, growing);
+      console.log('\n  Watchable now - converting ahead of you...');
+    }
+  }, 2000);
+  try {
+    await Promise.all(firstBatch.map((j, i) => encode(j, { growing: true, quiet: i > 0 })));
+  } finally { if (early) clearInterval(early); }
+  step.n = firstBatch.length;
+  publish(firstBatch.length === jobs.length);
+
+  // Then the rest (unless the app asked for just the first step; it queues backups later).
+  if (!opts.firstOnly) {
+    for (const job of jobs.slice(firstBatch.length)) {
+      step.n++;
+      await encode(job);
+      publish(step.n === jobs.length);
+    }
   }
 
   /**
@@ -494,8 +519,9 @@ async function main() {
    */
   function publish(final, converting) {
     lastPublish = [final, converting];
-    const hevc = [...done.hevc, ...(converting && converting.family === 'hevc' ? [converting] : [])].sort((a, b) => b.peak - a.peak);
-    const avc = [...done.avc, ...(converting && converting.family === 'avc' ? [converting] : [])].sort((a, b) => b.peak - a.peak);
+    const growing = converting ? [].concat(converting) : [];
+    const hevc = [...done.hevc, ...growing.filter((g) => g.family === 'hevc' && !done.hevc.some((d) => d.dir === g.dir))].sort((a, b) => b.peak - a.peak);
+    const avc = [...done.avc, ...growing.filter((g) => g.family === 'avc' && !done.avc.some((d) => d.dir === g.dir))].sort((a, b) => b.peak - a.peak);
     if (hevc.length) writeMaster(outDir, 'master-hevc.m3u8', hevc, fps);
     if (avc.length) writeMaster(outDir, 'master-avc.m3u8', avc, fps);
     const meta = {
@@ -507,13 +533,15 @@ async function main() {
       poster: fs.existsSync(poster) ? 'poster.jpg' : null,
       subtitles,
       partial: !final,
-      converting: !!converting,
+      converting: growing.length > 0,
       preparedAt: preparedAt,
     };
     writeAtomic(path.join(outDir, 'meta.json'), JSON.stringify(meta, null, 2));
     emit({ ready: true, id, partial: !final });
-    if (!final && step.n === 1 && !converting) console.log('\n  First version finished - making the backup versions...');
+    if (!final && !growing.length && step.n === firstBatchSize()) console.log('\n  First versions finished - making the backup versions...');
   }
+
+  function firstBatchSize() { return safety ? 2 : 1; }
 
   await subtitlesReady;
   const complete = done.hevc.length + done.avc.length === jobs.length;

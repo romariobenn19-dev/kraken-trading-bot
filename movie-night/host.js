@@ -126,9 +126,9 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     sendToHosts({ t: 'jobs', jobs: publicJobs() });
   }
 
-  function enqueue({ file, title, denoise, skipAvc, quick, subtitles: subs, auto, phase = 'watch' }) {
+  function enqueue({ file, title, denoise, skipAvc, skipHevc, quick, subtitles: subs, auto, phase = 'watch' }) {
     const job = {
-      id: nextJobId++, file, title, movieId: slugify(title), denoise: !!denoise, skipAvc: !!skipAvc, quick: !!quick,
+      id: nextJobId++, file, title, movieId: slugify(title), denoise: !!denoise, skipAvc: !!skipAvc, skipHevc: !!skipHevc, quick: !!quick,
       subtitles: subs, auto: !!auto, phase, priority: false,
       status: 'queued', progress: null, error: null, log: '', startedAt: null, finishedAt: null,
     };
@@ -167,6 +167,7 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     const args = [path.join(ROOT, 'prepare.js'), job.file, '--title', job.title, '--progress-json'];
     if (job.denoise) args.push('--denoise');
     if (job.skipAvc) args.push('--no-avc');
+    if (job.skipHevc) args.push('--no-hevc');
     if (job.quick) args.push('--quick');
     if (job.phase === 'watch') args.push('--first-only');
     if (job.phase === 'backups') args.push('--keep-subs');
@@ -217,7 +218,7 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
       runningJobs.delete(job);
       // Watchable version done: queue its backups (after every other movie's watchable version).
       if (job.status === 'done' && job.phase === 'watch' && !job.complete) {
-        enqueue({ file: job.file, title: job.title, denoise: job.denoise, skipAvc: job.skipAvc, quick: job.quick, auto: job.auto, phase: 'backups' });
+        enqueue({ file: job.file, title: job.title, denoise: job.denoise, skipAvc: job.skipAvc, skipHevc: job.skipHevc, quick: job.quick, auto: job.auto, phase: 'backups' });
       }
       pushJobs(true);
       libraryChanged();
@@ -550,6 +551,32 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     if (fixed.length) console.log(`  Restored missing files: ${fixed.join(', ')}`);
     return fixed;
   }
+
+  /**
+   * Movies added before the 360p safety version existed (or whose backups were cut short
+   * by a restart): queue a backups pass. Finished versions are reused, so only what's
+   * missing is made.
+   */
+  function topUpOldMovies() {
+    let ids = [];
+    try { ids = fs.readdirSync(LIBRARY); } catch { return; }
+    for (const id of ids) {
+      try {
+        const meta = JSON.parse(fs.readFileSync(path.join(LIBRARY, id, 'meta.json'), 'utf8'));
+        if (meta.converting || jobs.some((j) => j.movieId === id && ['queued', 'running'].includes(j.status))) continue;
+        const r = meta.renditions || [];
+        const hasSafety = r.some((x) => x.height <= 400);
+        if (hasSafety && !meta.partial) continue;
+        if (slugify(meta.title) !== id) continue;
+        const { file } = JSON.parse(fs.readFileSync(path.join(LIBRARY, id, '.source.json'), 'utf8'));
+        if (!file || !fs.existsSync(file)) continue;
+        const has1080 = r.some((x) => x.height >= 1000 && x.height <= 1100);
+        const quick = !r.some((x) => x.height > 1100 || (has1080 && /^720p_/.test(x.dir)));
+        enqueue({ file, title: meta.title, skipAvc: !meta.avc, skipHevc: !meta.hevc, quick, phase: 'backups' });
+      } catch { /* not a movie folder, or no original file: leave it */ }
+    }
+  }
+  setTimeout(topUpOldMovies, 20000).unref();
 
   return { handle, onStatus, publicJobs, repairMissing, prioritize, pendingMovies, isBusy: () => runningJobs.size > 0, ffmpeg: FFMPEG };
 };

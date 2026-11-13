@@ -459,7 +459,11 @@ let pendingStart = null;
 function beginLoading(maxOk, savedLevel) {
   if (!hls || pendingStart === null) return;
   let start = maxOk;
-  const bw = savedBandwidth();
+  let bw = savedBandwidth();
+  // The phone/tablet often knows its current link speed (rough, but it catches
+  // "I'm on a slow network now" when last time was fast).
+  const link = navigator.connection && navigator.connection.downlink; // Mbps, capped at 10
+  if (link > 0 && link < 10) bw = bw ? Math.min(bw, link * 1e6) : link * 1e6;
   if (bw) {
     // Shaky connection lately? Start more carefully.
     const factor = isShaky() ? 0.5 : 0.75;
@@ -1471,7 +1475,11 @@ function tuneAbrForBuffer() {
   // Stay at 1080p (at least the Lite version) as long as there's a safe cushion loaded.
   // Only if the cushion drops under ~12 s may it step down, so it never runs dry.
   const lowest1080 = levels.findIndex((l) => l.width >= 1900);
-  let floor = ahead >= 12 && lowest1080 >= 0 ? Math.min(lowest1080, top) : 0;
+  // ...but only when the connection can actually carry it. On a ~1 Mbps phone a forced
+  // 1080p just drains the cushion and pauses; better to drop to a light version and keep playing.
+  const lite = lowest1080 >= 0 ? levels[Math.min(lowest1080, top)] : null;
+  const carries = lite && safeBandwidth() >= (lite.averageBitrate || lite.bitrate) * 1.1;
+  let floor = ahead >= 12 && carries ? Math.min(lowest1080, top) : 0;
   hls.config.minAutoBitrate = floor > 0 ? levels[floor].maxBitrate || levels[floor].bitrate : 0;
 }
 

@@ -5,6 +5,7 @@ Watch movies together from different places. Your laptop does all the heavy work
 - **Everything happens in the app.** On your laptop: **＋ Add movie**, pick the file, done. It converts in the background with a progress bar.
 - **Sharpest picture her tablet can show.** Each movie is made in several qualities, up to 4K. Her Galaxy Tab A8 (1920×1200 screen) gets an extra-sharp 1080p HQ version sized for her ~7.75 Mbps.
 - **Wi-Fi dips don't show.** Up to two minutes is loaded ahead. If her connection really drops, both screens pause together and resume together.
+- **Keeps playing on very poor Wi-Fi.** Every movie also gets a tiny 360p version (about 0.4 Mbps). On a connection around 1 Mbps the picture goes softer instead of stopping, and it sharpens again by itself when the connection improves. This works from the first minute, even while the movie is still converting.
 - **Either of you can play, pause or skip**, and it happens on both screens within a fraction of a second.
 - **Made for the two of you.** Beige and bows, with cartoon versions of you two and the pup acting out movie scenes, your own faces as reactions, and the pup fetching the movie while it loads.
 - **🎀 Personalize** (on the laptop): your names, the pup's name and the day you got together. The app shows "Together X days" and counts your movie nights.
@@ -84,7 +85,7 @@ Save movies into **Videos\Movie Night** on the laptop. That's it: each one is ad
 - **Subtitles:** save the subtitle file in the same folder (or in the movie's own subfolder). It's matched automatically, even if the names differ: `Frieren - 14.mkv` + `[Group] Frieren - 14 [English].srt`, or a film's folder with `english.srt` inside. Several languages work (`Film.en.srt`, `Film.el.srt`).
 - **Subtitles you save later** are added to the movie automatically. No reconverting.
 - **Add several at once:** everything you drop in appears straight away on both screens under **Just added ⏳**. Tap any of them (either of you) and it jumps the queue: it opens on both screens about a minute later, even while another one is converting. Switch between them whenever you like.
-- Order: the watchable version of every movie is made first, then the backup versions for Wi-Fi dips.
+- Order: the watchable versions of every movie (the sharp one plus the tiny 360p safety one, made side by side) come first, then the backup versions for Wi-Fi dips.
 - Half-finished downloads (`.part`, `.crdownload`) are ignored until they're done, and "sample" clips are skipped.
 - Your original files are never moved or deleted (Movie Night needs them for adding built-in subtitles later).
 - On the laptop, the home screen shows the folder with **Open folder** and **Change…** buttons.
@@ -96,7 +97,7 @@ In Movie Night on your laptop, click **＋ Add movie**:
 - Check the title. It's tidied automatically, e.g. "Resident.Evil.2026.REPACK.1080p…" becomes "Resident Evil (2026)".
 - Optional: **Clean up film grain**, for older or grainy films, so they look sharper.
 - Optional: **Skip H.264 backups**, about a third faster. The app checks every device you two use (her tablet, your phone, the laptop's browser) and ticks this for you only when all of them can play HEVC.
-- **Quick** (ticked by default): only makes the versions her tablet uses: 1080p HQ, 1080p, **1080p Lite** (full 1080p at about 1.6 Mbps, so slow Wi-Fi can stay at 1080p) and 480p. Untick it if you also want 4K / 1440p versions.
+- **Quick** (ticked by default): only makes the versions her tablet uses: 1080p HQ, 1080p, **1080p Lite** (full 1080p at about 1.6 Mbps, so slow Wi-Fi can stay at 1080p), 480p and the 360p safety version. Untick it if you also want 4K / 1440p versions.
 - Click **Prepare movie**. **You can start watching within about a minute**: the movie appears (marked "⏳ Converting · watch now") once the first ~30 seconds are ready, and conversion keeps running ahead of you. Until it's finished you can only skip within the part that's done; the time shows "ready up to …". The backup versions (used if her Wi-Fi dips) keep going in the background; the card says "finishing backups…" until they're done.
 
 Good to know:
@@ -128,6 +129,9 @@ Her speed test showed **7.75 Mbps**. Your 42 Mbps upload is plenty.
 | 1080p | ~3.2 Mbps | ~5 Mbps |
 | 720p | ~1.6 Mbps | ~2.5 Mbps |
 | 480p | ~0.8 Mbps | ~1.1 Mbps |
+| 360p (safety) | ~0.4 Mbps | ~0.55 Mbps (only for H.264-only movies) |
+
+Around 1 Mbps or less, it plays the 360p version rather than pausing. 1080p is only held onto while the connection can really carry it.
 
 ## Troubleshooting
 
@@ -135,7 +139,7 @@ Her speed test showed **7.75 Mbps**. Your 42 Mbps upload is plenty.
 |---|---|
 | Her link won't load | Is Tailscale on (connected) on both devices? Is your laptop awake? Click the desktop icon to make sure Movie Night is running. |
 | "Her link: Tailscale is off" | Open Tailscale on the laptop and connect, then refresh the page |
-| It keeps pausing for her | Check her bubble's Mbps number. Moving closer to the router, or switching the router to 5 GHz Wi-Fi, helps most. |
+| It keeps pausing for her | Movies added before version 2.4 have no 360p safety version: delete and re-add them (or let the auto-add folder do it). Check her bubble's Mbps number. Moving closer to the router, or switching the router to 5 GHz Wi-Fi, helps most. |
 | A movie failed to prepare | The error shows in its progress box. Send a screenshot. |
 | Something odd | Movie Night runs in a minimised window called "Movie Night" on your taskbar. Open it to see messages. Closing it stops Movie Night; the desktop icon starts it again. |
 
