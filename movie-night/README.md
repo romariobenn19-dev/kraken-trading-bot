@@ -34,6 +34,29 @@ If Windows says *"Windows protected your PC"*, click **More info**, then **Run a
 3. You: in Movie Night on your laptop, click **Copy** next to **Her link** and send it to her.
 4. Her: open the link in Chrome, type her name, and bookmark it (or add it to her home screen).
 
+## What's in the app
+
+**Home:** a big banner for what you're watching, then rows: *Continue watching* (with how much is left), *Series*, *New*, *Anime*, *Favourites ♥* and *Movies*. Tap ♡ on any movie to make it a favourite.
+
+**Real posters and descriptions (optional):** in 🎀 Personalize on the laptop, paste a free TMDB key (themoviedb.org → Settings → API). Movies and episodes get real posters, backdrops, descriptions, ratings and genres.
+
+**Series:** episodes are recognised from their names ("Show S01E14", "Show Episode 166", "Show - 07") and grouped into one show with seasons. When an episode ends, the next one starts on both screens after a 12-second countdown (you can cancel). **Skip intro** shows near the start of episodes; set the intro length per show on its page.
+
+**While watching:**
+- Curtains open with a 3-2-1 countdown on both screens when a movie starts
+- 💬 live chat that pops up on both screens
+- 🤗 hold to cuddle: when you both hold it at the same time, hearts fill the screen
+- 💌 love notes: leave a note at a moment in a movie; it pops up for the other person when they reach it
+- 📸 snapshot: saves the current frame to your diary (and the "Our moments" strip)
+
+**📖 Our diary:** after each movie you're both asked for stars and a one-line review. Each movie becomes a scrapbook page with your ratings, quotes, love notes and snapshots, plus stats: movies together, hours together, each of your favourites.
+
+**🎲 Pick together:** swipe ♥ or ✗ on what you haven't watched. When you both ♥ the same one it's a match. **Spin the wheel** spins on both screens and lands on the same pick.
+
+**📅 Movie-night countdown:** plan the next one; the home screen shows the countdown and the time for each of you (e.g. 3:00 PM yours, 9:00 PM hers).
+
+**🔔 Notifications (her tablet):** tap 🔔 Notifications once. She gets a notification when a new movie is ready, when you start Movie Night, and 30 minutes before a planned movie night.
+
 ## Install it as an app
 
 **Laptop:** open Movie Night in Chrome or Edge and click **⬇ Install app** (top right), or the install icon at the end of the address bar. It gets its own window and a desktop / Start menu icon.

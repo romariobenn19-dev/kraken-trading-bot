@@ -19,7 +19,7 @@ const VIDEO_EXT = new Set(['.mp4', '.mkv', '.avi', '.mov', '.m4v', '.wmv', '.web
 // Files that make up the app. The updater also uses the list published in the
 // new version's package.json (movieNight.files), so files added later are never missed.
 const APP_FILES = [
-  'server.js', 'host.js', 'prepare.js', 'subtitles.js', 'package.json', 'README.md',
+  'server.js', 'host.js', 'prepare.js', 'subtitles.js', 'features.js', 'tmdb.js', 'public/series.js', 'public/home.js', 'public/together.js', 'package.json', 'README.md',
   'setup.bat', 'setup-helper.ps1', 'setup-shortcuts.ps1', 'start-movie-night.bat', 'prepare-movie.bat',
   'public/index.html', 'public/app.js', 'public/art.js', 'public/style.css', 'public/icon.png', 'public/icon.ico',
   'public/manifest.webmanifest', 'public/sw.js', 'public/offline.html', 'public/icon-192.png', 'public/icon-512.png',
@@ -95,7 +95,7 @@ function json(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
-module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendToHosts, libraryChanged, links, onMovieDeleted, restart, savePersonal, openPhotosFolder, httpsStatus, retryHttps }) {
+module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendToHosts, libraryChanged, links, onMovieDeleted, restart, savePersonal, openPhotosFolder, httpsStatus, retryHttps, tmdb, onMovieReady }) {
   const FFMPEG = findTool('ffmpeg');
   const FFPROBE = findTool('ffprobe');
   const version = () => JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
@@ -168,6 +168,7 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
               const first = !job.ready;
               job.ready = true;
               libraryChanged();
+              if (first && onMovieReady) onMovieReady(job.title);
               pushJobs(first);
             } else job.progress = ev;
             pushJobs();
@@ -315,7 +316,7 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     try {
       if (req.method === 'GET' && pathname === '/api/host/info') {
         return json(res, 200, {
-          version: version(), links: links(), https: httpsStatus(), ...hevcDevices(),
+          version: version(), links: links(), https: httpsStatus(), ...hevcDevices(), tmdbKey: tmdb && tmdb.hasKey(),
           ffmpegFound: !spawnSync(FFMPEG, ['-version'], { windowsHide: true }).error,
           freeGb: freeSpaceGb(LIBRARY),
         });
@@ -399,6 +400,14 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
       if (pathname === '/api/host/update') return json(res, 200, await applyUpdate());
       if (pathname === '/api/host/personal') { savePersonal(body); return json(res, 200, {}); }
       if (pathname === '/api/host/open-photos') return json(res, 200, { folder: openPhotosFolder() });
+      if (pathname === '/api/host/tmdb') {
+        config.tmdbKey = String(body.key || '').trim().slice(0, 400);
+        saveConfig();
+        if (!config.tmdbKey) return json(res, 200, { ok: true, removed: true });
+        const r = await tmdb.refresh(true);
+        if (!r.ok && r.reason === 'bad-key') return json(res, 400, { error: 'TMDB didn\'t accept that key. Copy the "API Key" (or "API Read Access Token") again.' });
+        return json(res, 200, r);
+      }
       if (pathname === '/api/host/https-retry') { await retryHttps(); return json(res, 200, httpsStatus()); }
       return json(res, 404, { error: 'Not found' });
     } catch (e) {

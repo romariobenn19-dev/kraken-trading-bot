@@ -3,3 +3,4 @@ library/
 config.json
 movie-night.log
 personal/
+data.json

@@ -22,6 +22,8 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
 const createHost = require('./host');
+const createFeatures = require('./features');
+const createTmdb = require('./tmdb');
 
 const ROOT = __dirname;
 const PUBLIC = path.join(ROOT, 'public');
@@ -142,7 +144,8 @@ function listMovies() {
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const hostApi = url.pathname.startsWith('/api/host/');
-  if (req.method !== 'GET' && req.method !== 'HEAD' && !(hostApi && req.method === 'POST')) { res.writeHead(405); res.end(); return; }
+  const featureApi = url.pathname.startsWith('/api/f/');
+  if (req.method !== 'GET' && req.method !== 'HEAD' && !((hostApi || featureApi) && req.method === 'POST')) { res.writeHead(405); res.end(); return; }
 
   if (PUBLIC_FILES.has(url.pathname) && req.method !== 'POST') {
     const extra = url.pathname === '/sw.js' ? 'no-cache' : 'public, max-age=86400';
@@ -171,6 +174,18 @@ const server = http.createServer((req, res) => {
     host.handle(req, res, pathname, url);
     return;
   }
+  if (featureApi) {
+    const origin = req.headers.origin;
+    if (req.method === 'POST' && origin && new URL(origin).host !== req.headers.host) { res.writeHead(403); res.end(); return; }
+    features.http(req, res, pathname, url);
+    return;
+  }
+  if (pathname.startsWith('/personal/snapshots/')) {
+    const file = within(features.snapsDir, pathname.slice('/personal/snapshots/'.length));
+    if (!file || !file.endsWith('.jpg')) { res.writeHead(403); res.end(); return; }
+    sendFile(req, res, file, 'private, max-age=86400');
+    return;
+  }
   if (pathname === '/api/personal') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify(personal()));
@@ -184,7 +199,7 @@ const server = http.createServer((req, res) => {
   }
   if (pathname === '/api/movies') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify(listMovies()));
+    res.end(JSON.stringify(listMovies().map((m) => ({ ...m, tmdb: tmdb.cached(m.id) }))));
     return;
   }
   if (pathname.startsWith('/library/')) {
@@ -282,6 +297,7 @@ function hasBuffer(c, need) {
 
 function evaluate() {
   if (!room.movieId || !room.wantPlay || clients.size === 0) return;
+  if (room.hold && room.hold.reason === 'countdown') return; // curtains are opening
   const list = [...clients.values()];
   if (!room.paused) {
     const struggling = list.filter((c) => participating(c) && !c.late && !c.full && (c.stalled || c.buffer < LOW_BUFFER));
@@ -305,6 +321,7 @@ function evaluate() {
     }
     const waitingFor = waiting.map((c) => c.name);
     if (!waitingFor.length) {
+      if (room.pos < 2 && room.countdownFor !== room.movieId) { startWithCurtains(); return; }
       room.hold = null;
       setPosition(room.pos, false);
       countMovieNight();
@@ -336,13 +353,17 @@ function handle(ws, c, msg) {
     case 'ping':
       send(ws, { t: 'pong', c: msg.c, s: Date.now() });
       break;
-    case 'load':
+    case 'load': {
       if (typeof msg.movieId !== 'string') return;
-      room.movieId = msg.movieId || null;
-      room.wantPlay = false; room.hold = null; room.stalls = 0;
-      setPosition(Number(msg.pos) || 0, true);
-      changed();
+      if (room.movieId) features.trackProgress(nowPos(), true);
+      const wasEmpty = !room.movieId;
+      loadMovie(msg.movieId, Number.isFinite(msg.pos) ? msg.pos : undefined);
+      if (msg.movieId && (wasEmpty || msg.movieId)) {
+        const mv = listMovies().find((m) => m.id === msg.movieId);
+        if (mv) features.onMovieLoaded(mv.title, c.name);
+      }
       break;
+    }
     case 'play':
       if (!room.movieId) return;
       for (const other of clients.values()) other.late = false;
@@ -365,6 +386,7 @@ function handle(ws, c, msg) {
     case 'pause':
       room.wantPlay = false; room.hold = null;
       setPosition(Number.isFinite(msg.pos) ? msg.pos : nowPos(), true);
+      features.trackProgress(room.pos, true);
       changed();
       break;
     case 'seek':
@@ -395,6 +417,7 @@ function handle(ws, c, msg) {
       broadcast({ t: 'react', from: c.name, emoji: String(msg.emoji || '').slice(0, 8) });
       break;
     default:
+      features.handle(c, msg);
   }
 }
 
@@ -421,6 +444,7 @@ wss.on('connection', (ws, req) => {
   });
   ws.on('close', () => {
     clients.delete(ws);
+    features.onDisconnect(c);
     // If someone drops while we're held waiting for them, don't wait forever.
     evaluate();
   });
@@ -436,6 +460,47 @@ function rememberDevice(c, deviceId) {
   devices[deviceId] = { name: c.name, hevc: c.hevc, host: !!c.isHost, lastSeen: today };
   saveConfig();
 }
+
+/** Start of a movie: curtains open with a 3-2-1 countdown on every screen, then play. */
+function startWithCurtains() {
+  room.countdownFor = room.movieId;
+  room.hold = { reason: 'countdown', who: [], since: Date.now() };
+  changed();
+  const at = Date.now() + 3000;
+  broadcast({ t: 'countdown', at });
+  setTimeout(() => {
+    if (!room.hold || room.hold.reason !== 'countdown') return;
+    room.hold = null;
+    setPosition(room.pos, false);
+    countMovieNight();
+    changed();
+  }, 3000);
+}
+
+/** Open a movie on every screen (resuming where you left off unless told otherwise). */
+function loadMovie(movieId, pos) {
+  room.movieId = movieId || null;
+  room.wantPlay = false; room.hold = null; room.stalls = 0;
+  let start = pos;
+  if (start === undefined && movieId) {
+    const p = features.progressOf(movieId);
+    start = p && !p.done && p.pos > 30 ? Math.max(0, p.pos - 5) : 0;
+  }
+  setPosition(start || 0, true);
+  changed();
+}
+
+function startPlaying() {
+  if (!room.movieId) return;
+  for (const other of clients.values()) other.late = false;
+  room.wantPlay = true;
+  room.hold = { reason: 'starting', who: [], since: Date.now() };
+  changed();
+  evaluate();
+}
+
+// Remember how far you got (continue watching / diary), every few seconds while playing.
+setInterval(() => { if (room.movieId && !room.paused) features.trackProgress(nowPos()); }, 5000);
 
 // Re-check holds every second (for the start timeout), even if nobody sends anything.
 setInterval(evaluate, 1000);
@@ -601,9 +666,15 @@ function restart() {
   }, 400);
 }
 
+const features = createFeatures({
+  ROOT, config, saveConfig, broadcast, clients, room, listMovies, loadMovie, startPlaying, publicLinks: () => links(),
+});
+const tmdb = createTmdb({ LIBRARY, config, listMovies, onUpdated: () => broadcast({ t: 'library' }) });
+
 const host = createHost({
   ROOT, LIBRARY, config, saveConfig, links, restart, savePersonal, openPhotosFolder,
   httpsStatus: () => ({ ...tsHttps }), retryHttps: () => setupHttps(),
+  tmdb, onMovieReady: (title) => { features.onNewMovie(title); tmdb.refresh().catch(() => {}); },
   sendToHosts(msg) {
     const data = JSON.stringify(msg);
     for (const [ws, c] of clients) if (c.isHost && ws.readyState === ws.OPEN) ws.send(data);
@@ -643,6 +714,7 @@ server.listen(PORT, '0.0.0.0', () => {
   if (ARGS.has('--open')) openBrowser(l.host);
   host.repairMissing().then((fixed) => { if (fixed.length) broadcast({ t: 'library' }); }).catch(() => {});
   setupHttps().catch(() => {});
+  setTimeout(() => tmdb.refresh().catch(() => {}), 3000);
   ensureWindowsShortcuts();
 });
 

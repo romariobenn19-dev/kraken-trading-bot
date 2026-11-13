@@ -32,33 +32,54 @@
     <header class="bar">
       <h2><span class="title-bow"></span><span class="couple-title">Movie Night</span></h2>
       <div class="bar-right">
+        <button id="notifyBtn" class="ghost small hidden">🔔 Notifications</button>
         <button id="installBtn" class="ghost small hidden">⬇ Install app</button>
         <div id="peersLib" class="peers"></div>
       </div>
     </header>
+    <nav class="tabs" role="tablist">
+      <button class="tab on" data-tab="home" role="tab" aria-selected="true">🏠 Home</button>
+      <button class="tab" data-tab="diary" role="tab" aria-selected="false">📖 Our diary</button>
+      <button class="tab" data-tab="pick" role="tab" aria-selected="false">🎲 Pick together</button>
+    </nav>
 
-    <div class="strip" aria-hidden="true"><div class="strip-track" id="strip"></div></div>
-    <p id="tidbits" class="tidbits"></p>
+    <div id="tab-home" class="tab-panel">
+      <div id="countdownCard" class="countdown-card"></div>
+      <div id="hero" class="hero hidden"></div>
 
-    <!-- Only shown on the host laptop -->
-    <div id="hostBar" class="host-bar hidden">
-      <button id="addMovieBtn" class="primary">＋ Add movie</button>
-      <div class="her-link">
-        <span class="muted small">Her link</span>
-        <code id="herLink">…</code>
-        <button id="copyLink" class="ghost small">Copy</button>
+      <!-- Only shown on the host laptop -->
+      <div id="hostBar" class="host-bar hidden">
+        <button id="addMovieBtn" class="primary">＋ Add movie</button>
+        <div class="her-link">
+          <span class="muted small">Her link</span>
+          <code id="herLink">…</code>
+          <button id="copyLink" class="ghost small">Copy</button>
+        </div>
+        <button id="personalBtn" class="ghost small">🎀 Personalize</button>
+        <button id="updateBtn" class="ghost small">Check for updates</button>
       </div>
-      <button id="personalBtn" class="ghost small">🎀 Personalize</button>
-      <button id="updateBtn" class="ghost small">Check for updates</button>
-    </div>
-    <div id="httpsNote" class="https-note hidden"></div>
-    <div id="jobs" class="jobs"></div>
+      <div id="httpsNote" class="https-note hidden"></div>
+      <div id="jobs" class="jobs"></div>
 
-    <h3 class="section-title pad">Our movies</h3>
-    <div id="movies" class="grid"></div>
-    <div id="noMovies" class="empty hidden">
-      <div id="emptyArt" class="empty-art"></div>
-      <p class="muted">No movies yet. Add one on the laptop and it'll appear here for both of you.</p>
+      <div id="rows" class="rows"></div>
+      <div id="movies" class="hidden"></div>
+      <div id="noMovies" class="empty hidden">
+        <div id="emptyArt" class="empty-art"></div>
+        <p class="muted">No movies yet. Add one on the laptop and it'll appear here for both of you.</p>
+      </div>
+
+      <h3 class="section-title pad">Our moments</h3>
+      <div class="strip" aria-hidden="true"><div class="strip-track" id="strip"></div></div>
+      <p id="tidbits" class="tidbits"></p>
+    </div>
+
+    <div id="tab-diary" class="tab-panel hidden">
+      <div id="diaryStats" class="diary-stats"></div>
+      <div id="diaryList" class="diary-list"></div>
+    </div>
+
+    <div id="tab-pick" class="tab-panel hidden">
+      <div id="pickArea" class="pick-area"></div>
     </div>
   </section>
 
@@ -84,6 +105,16 @@
 
       <button id="tapToPlay" class="tap hidden">▶ Tap to continue</button>
       <div id="floaters"></div>
+      <div id="hearts" class="hearts-layer" aria-hidden="true"></div>
+      <div id="chatLog" class="chat-log" aria-live="polite"></div>
+      <div id="noteToast" class="note-toast hidden" role="status"></div>
+      <button id="skipIntro" class="skip-intro hidden">Skip intro ⏭</button>
+      <div id="nextUp" class="next-up hidden" role="status"></div>
+      <div id="curtains" class="curtains hidden" aria-hidden="true">
+        <div class="curtain left"></div><div class="curtain right"></div>
+        <div class="curtain-count" id="curtainCount">3</div>
+      </div>
+      <div id="flash" class="flash hidden"></div>
       <div id="netBanner" class="banner hidden">Reconnecting…</div>
 
       <div id="chrome" class="chrome">
@@ -94,6 +125,10 @@
         </div>
         <div class="bottom">
           <div id="subsMenu" class="subs-menu hidden" role="dialog" aria-label="Subtitle settings"></div>
+          <form id="chatBar" class="chat-bar hidden" autocomplete="off">
+            <input id="chatInput" maxlength="240" placeholder="Say something sweet…" aria-label="Chat message">
+            <button class="icon" type="submit" aria-label="Send">➤</button>
+          </form>
           <input id="seek" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek">
           <div class="row">
             <button id="back10" class="icon" title="Back 10s">⟲10</button>
@@ -102,6 +137,10 @@
             <span id="time" class="time">0:00 / 0:00</span>
             <span class="spacer"></span>
             <span class="reacts" id="reacts"></span>
+            <button id="chatBtn" class="icon" title="Chat" aria-label="Chat">💬</button>
+            <button id="noteBtn" class="icon" title="Leave a love note here" aria-label="Leave a love note">💌</button>
+            <button id="snapBtn" class="icon" title="Save this moment to our diary" aria-label="Snapshot">📸</button>
+            <button id="cuddleBtn" class="icon cuddle-btn" title="Hold to cuddle" aria-label="Hold to cuddle">🤗</button>
             <button id="subsBtn" class="icon hidden" title="Subtitles">CC</button>
             <select id="quality" title="Quality"></select>
             <button id="fsBtn" class="icon" title="Full screen">⛶</button>
@@ -182,6 +221,11 @@
           <div><label for="pDog">Your pup's name</label><input id="pDog" maxlength="30"></div>
           <div><label for="pSince">Together since</label><input id="pSince" type="date"></div>
         </div>
+        <div class="tmdb-field">
+          <label for="pTmdb">Real posters &amp; descriptions (optional): TMDB API key</label>
+          <input id="pTmdb" placeholder="Paste your free TMDB key" autocomplete="off">
+          <p class="muted small">Free at <b>themoviedb.org</b>: make an account, then Settings → API → copy the <b>API Key</b>. Only used on this laptop.</p>
+        </div>
         <p class="muted small">Your photos: drop pictures into the <b>personal\photos</b> folder in Movie Night and they appear as polaroids for both of you. They stay on this laptop and are never uploaded anywhere.</p>
         <div class="row">
           <button id="openPhotos" class="ghost">📷 Open photos folder</button>
@@ -202,10 +246,62 @@
     </div>
   </div>
 
+  <div id="seriesSheet" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="seriesTitle">
+    <div class="sheet series-sheet">
+      <div id="seriesHead" class="series-head"></div>
+      <div id="seriesBody" class="series-body"></div>
+    </div>
+  </div>
+
+  <div id="scheduleSheet" class="modal hidden" role="dialog" aria-modal="true" aria-label="Plan movie night">
+    <div class="sheet">
+      <header class="sheet-head"><b>📅 Plan our next movie night</b><button class="ghost small" data-close="scheduleSheet" aria-label="Close">✕</button></header>
+      <div class="confirm">
+        <label for="scheduleAt">When? (your time)</label>
+        <input id="scheduleAt" type="datetime-local">
+        <p id="schedulePreview" class="muted small"></p>
+        <div class="row"><button id="scheduleClear" class="ghost">Clear</button><span class="spacer"></span><button id="scheduleSave" class="primary">Save</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="noteSheet" class="modal hidden" role="dialog" aria-modal="true" aria-label="Leave a love note">
+    <div class="sheet">
+      <header class="sheet-head"><b>💌 Leave a love note</b><button class="ghost small" data-close="noteSheet" aria-label="Close">✕</button></header>
+      <div class="confirm">
+        <p id="noteWhere" class="muted small"></p>
+        <textarea id="noteText" maxlength="300" rows="3" placeholder="Write something for this moment…"></textarea>
+        <div class="row"><span class="spacer"></span><button id="noteSave" class="primary">Leave note</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="rateCard" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="rateTitle">
+    <div class="sheet rate-card">
+      <div id="rateArt" class="rate-art"></div>
+      <h2 id="rateTitle">How was it?</h2>
+      <div id="rateStars" class="rate-stars" role="radiogroup" aria-label="Stars"></div>
+      <input id="rateText" maxlength="200" placeholder="One line about it (optional)">
+      <div class="row"><button id="rateSkip" class="ghost">Later</button><span class="spacer"></span><button id="rateSave" class="primary">Save to our diary</button></div>
+    </div>
+  </div>
+
+  <div id="wheelSheet" class="modal hidden" role="dialog" aria-modal="true" aria-label="Spin the wheel">
+    <div class="sheet wheel-sheet">
+      <div class="wheel-wrap"><div class="wheel-pointer">▼</div><div id="wheel" class="wheel"></div></div>
+      <div id="wheelResult" class="wheel-result"></div>
+    </div>
+  </div>
+
+  <div id="photoView" class="modal hidden" role="dialog" aria-modal="true" aria-label="Photo"><img id="photoImg" alt=""></div>
+
   <div id="toast" class="toast hidden"></div>
 
   <script src="/vendor/hls.min.js"></script>
   <script src="/art.js"></script>
+  <script src="/series.js"></script>
   <script src="/app.js"></script>
+  <script src="/home.js"></script>
+  <script src="/together.js"></script>
 </body>
 </html>

@@ -191,7 +191,10 @@ function connect() {
   ws.onopen = () => {
     retry = 0;
     $('netBanner').classList.add('hidden');
-    hevcSupport.then((hevc) => send({ t: 'hello', name: store.get('mn_name'), role, deviceId, hevc }));
+    hevcSupport.then((hevc) => {
+      send({ t: 'hello', name: store.get('mn_name'), role, deviceId, hevc });
+      try { send({ t: 'tz', tz: Intl.DateTimeFormat().resolvedOptions().timeZone }); } catch { /* old browser */ }
+    });
     clockSamples = [];
     for (let i = 0; i < 6; i++) setTimeout(ping, i * 300);
   };
@@ -207,6 +210,7 @@ function connect() {
     else if (m.t === 'library') refreshMovies().then(syncOpenMovieSubs);
     else if (m.t === 'personal') loadPersonal();
     else if (m.t === 'restarting') { toast('Updating Movie Night… back in a few seconds'); appVersion = 'restarting'; }
+    else if (typeof onFeatureMessage === 'function') onFeatureMessage(m); // together features (home.js / together.js)
   };
   ws.onclose = (ev) => {
     if (replaced || ev.code === 4001) return; // opened somewhere else: don't fight over it
@@ -233,6 +237,7 @@ async function refreshMovies() {
     const r = await fetch('/api/movies', { cache: 'no-store' });
     movies = await r.json();
   } catch { movies = []; }
+  if (typeof renderHome === 'function') { renderHome(); return; }
   const grid = $('movies');
   grid.innerHTML = '';
   $('noMovies').classList.toggle('hidden', movies.length > 0);
@@ -286,6 +291,7 @@ async function onState(s) {
   renderHold();
   updatePlayButton();
   renderIntermission();
+  if (typeof afterState === 'function') afterState();
 }
 
 function closeMovie() {
@@ -294,6 +300,7 @@ function closeMovie() {
   video.load();
   meta = null;
   releaseWakeLock();
+  if (typeof afterCloseMovie === 'function') afterCloseMovie();
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   showScreen('library');
   refreshMovies();
@@ -310,6 +317,7 @@ async function openMovie(id) {
   showScreen('player');
   for (const t of [...video.querySelectorAll('track')]) t.remove();
   buildSubtitleTracks(mv);
+  if (typeof afterOpenMovie === 'function') afterOpenMovie(mv);
 
   const base = `/library/${encodeURIComponent(mv.id)}/`;
   setPlayerError(null);
@@ -598,7 +606,10 @@ video.addEventListener('playing', () => { stalled = false; });
 video.addEventListener('timeupdate', updateTime);
 video.addEventListener('loadedmetadata', updateTime);
 video.addEventListener('progress', paintSeek);
-video.addEventListener('ended', () => send({ t: 'pause', pos: video.duration || expectedPos() }));
+video.addEventListener('ended', () => {
+  send({ t: 'pause', pos: video.duration || expectedPos() });
+  if (meta) send({ t: 'ended', movieId: meta.id });
+});
 
 // ---- Controls --------------------------------------------------------------------
 $('playBtn').onclick = () => {
@@ -733,7 +744,7 @@ function renderPeers() {
 
 function renderHold() {
   const el = $('hold');
-  if (!state || !meta || !state.hold) { el.classList.add('hidden'); return; }
+  if (!state || !meta || !state.hold || state.hold.reason === 'countdown') { el.classList.add('hidden'); return; }
   el.classList.remove('hidden');
   const need = state.hold.reason === 'starting' ? state.startBuffer : state.resumeTarget;
   const needFor = (p) => (state.hold.reason === 'starting' && p.shaky ? Math.max(need, 45) : need);
@@ -792,6 +803,7 @@ function onWelcome(m) {
   appVersion = m.version;
   isHost = !!m.isHost;
   $('hostBar').classList.toggle('hidden', !isHost);
+  if (typeof updateNotifyButton === 'function') updateNotifyButton();
   if (isHost) { loadHostInfo(); refreshMovies(); }
 }
 
@@ -1002,7 +1014,8 @@ function collageItems() {
   if (!Art.SCENES.length && !personalInfo.photos.length) return [];
   const items = Art.SCENES.map((n) => ({ html: Art.scene(n), cap: CAPTIONS[n] || '' }));
   // Mix in your real photos (from the private personal\photos folder on the laptop).
-  const photos = personalInfo.photos.map((src) => ({ html: `<img src="${src}" alt="" loading="lazy">`, cap: '♡' }));
+  const photos = [...personalInfo.photos.map((src) => ({ html: `<img src="${src}" alt="" loading="lazy">`, cap: '♡' })),
+    ...(typeof extraMoments === 'function' ? extraMoments() : [])];
   const out = [];
   const n = Math.max(items.length, photos.length);
   for (let i = 0; i < n; i++) {
