@@ -215,9 +215,12 @@ async function openMovie(id) {
       maxBufferSize: 120 * 1000 * 1000,
       backBufferLength: 20,
       startPosition,
+      // Don't start downloading until we've picked the starting quality (see setupQuality).
+      autoStartLoad: false,
       capLevelToPlayerSize: false,
       // Be a bit conservative so quality doesn't flip-flop on a shaky connection.
-      abrEwmaDefaultEstimate: 2_500_000,
+      // Start from this device's last measured speed (or assume a decent connection).
+      abrEwmaDefaultEstimate: savedBandwidth() || 8_000_000,
       abrBandWidthFactor: 0.8,
       abrBandWidthUpFactor: 0.7,
       // Forget a bad patch quickly so the picture climbs back up once Wi-Fi recovers.
@@ -232,7 +235,10 @@ async function openMovie(id) {
         },
       },
     });
-    hls.on(Hls.Events.MANIFEST_PARSED, () => setupQuality());
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      // Safety net: whatever happens while choosing quality, start loading.
+      setupQuality().catch(() => {}).finally(() => beginLoading(hls ? hls.levels.length - 1 : 0, null));
+    });
     hls.on(Hls.Events.LEVEL_SWITCHED, () => updateQualityLabel());
     hls.on(Hls.Events.ERROR, (_e, data) => {
       if (!data.fatal) return;
@@ -243,6 +249,7 @@ async function openMovie(id) {
         if (mediaErrors > 3) setPlayerError('playback'); else hls.recoverMediaError();
       } else setPlayerError('playback');
     });
+    pendingStart = startPosition;
     hls.loadSource(src);
     hls.attachMedia(video);
   } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -306,6 +313,38 @@ async function setupQuality() {
   sel.value = savedLevel ? String(savedLevel.index) : '-1';
   if (savedLevel) hls.loadLevel = savedLevel.index;
   updateQualityLabel();
+  beginLoading(maxOk, savedLevel);
+}
+
+/**
+ * Start with the sharpest version this device can show, unless this device's
+ * connection was measured too slow for it last time; then the best that fits.
+ */
+let pendingStart = null;
+function beginLoading(maxOk, savedLevel) {
+  if (!hls || pendingStart === null) return;
+  let start = maxOk;
+  const bw = savedBandwidth();
+  if (bw) {
+    while (start > 0 && (hls.levels[start].averageBitrate || hls.levels[start].bitrate) > bw * 0.75) start--;
+  }
+  hls.startLevel = savedLevel ? savedLevel.index : start;
+  hls.startLoad(pendingStart);
+  pendingStart = null;
+}
+
+/** Remember this device's real download speed for next time. */
+function savedBandwidth() {
+  const v = Number(store.get('mn_bw'));
+  return Number.isFinite(v) && v > 100000 ? v : 0;
+}
+let bwSavedAt = 0;
+function rememberBandwidth() {
+  if (!hls || !hls.bandwidthEstimate || Date.now() - bwSavedAt < 15000) return;
+  // Only trust the estimate once real chunks have been downloaded.
+  if (!hls.levels.length || hls.currentLevel < 0) return;
+  bwSavedAt = Date.now();
+  store.set('mn_bw', String(Math.round(hls.bandwidthEstimate)));
 }
 
 function labelFor(lv) {
@@ -393,6 +432,7 @@ function reportStatus() {
   const visible = document.visibilityState !== 'hidden';
   if (!meta) { send({ t: 'status', movieId: null, visible }); return; }
   maybeUpgradeBuffered();
+  rememberBandwidth();
   // During a quality upgrade the buffer is briefly short on purpose; real stalls still report via 'waiting'.
   const ahead = Date.now() < upgradeGraceUntil ? Math.max(bufferAhead(), 5) : bufferAhead();
   const dur = video.duration || meta.duration || 0;
