@@ -106,8 +106,8 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
   let lastPush = 0;
 
   function publicJobs() {
-    return jobs.map(({ id, title, file, status, progress, error, startedAt, finishedAt, ready }) =>
-      ({ id, title, file: path.basename(file), status, progress, error, startedAt, finishedAt, ready: !!ready }));
+    return jobs.map(({ id, title, file, status, progress, error, startedAt, finishedAt, ready, source }) =>
+      ({ id, title, file: path.basename(file), status, progress, error, startedAt, finishedAt, ready: !!ready, source: source || null }));
   }
   function pushJobs(force) {
     const now = Date.now();
@@ -160,6 +160,7 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
           try {
             const ev = JSON.parse(line.slice(2));
             if (ev.done) job.resultId = ev.id;
+            else if (ev.source) job.source = ev.source;
             else if (ev.ready) {
               // A version is finished: the movie is watchable now (backups may still be coming).
               const first = !job.ready;

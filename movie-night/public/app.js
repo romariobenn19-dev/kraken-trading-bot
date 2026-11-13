@@ -721,6 +721,10 @@ function renderJobs(jobs) {
     el.innerHTML = `<div class="job-top"><b></b><span class="muted small"></span><button class="ghost small"></button></div>
       ${j.status === 'running' || j.status === 'done' ? `<div class="meter"><i style="width:${pct.toFixed(1)}%"></i></div>` : ''}
       ${j.error ? '<pre></pre>' : ''}`;
+    if (j.source && j.source.width && (j.status === 'running' || j.status === 'done')) {
+      const srcP = Math.min(j.source.height, Math.round(j.source.width * 9 / 16));
+      detail += ` · original file: ${j.source.width}×${j.source.height}` + (srcP < 700 ? ' (that\'s as sharp as this file goes)' : '');
+    }
     el.querySelector('b').textContent = j.title;
     el.querySelector('.muted').textContent = detail;
     const btn = el.querySelector('button');

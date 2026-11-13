@@ -337,6 +337,7 @@ async function main() {
   const enc = pickEncoders(opts.encoder);
   console.log(`\nMovie Night - preparing "${title}"`);
   console.log(`  Source:   ${video.width}x${video.height} ${video.codec_name}${isHdr ? ' HDR' : ''}, ${fps.toFixed(2)} fps, ${fmtDuration(duration)}`);
+  emit({ source: { width: srcW, height: srcH } });
   console.log(`  Encoder:  ${enc.name}${enc.name === 'cpu' ? ' (no GPU encoder found - this will be slow; leave it overnight)' : ' (GPU)'}`);
   console.log(`  Output:   ${outDir}\n`);
 
@@ -352,11 +353,25 @@ async function main() {
     if (opts.avc) jobs.push({ ...AVC_LADDER[AVC_LADDER.length - 1], width: w, family: 'avc' });
   }
 
+  // Keep the original's full detail: if it sits between the standard sizes (e.g. 768x432,
+  // 640x360 below 480p...), add a version at its exact size so nothing is thrown away.
+  const biggest = Math.max(0, ...jobs.filter((j) => j.width !== srcW).map((j) => j.width));
+  const nativeW = even(srcW), nativeH = even(srcH);
+  if (srcW < 1900 && nativeW > biggest * 1.08 && nativeH <= opts.max) {
+    const scale = Math.pow((nativeW * nativeH) / (1920 * 1080), 0.8);
+    const hevcKbps = Math.max(450, Math.round(3200 * scale * 1.25));
+    const nativeJob = { label: `${nativeH}p`, tag: 'src', width: nativeW };
+    // Drop the shrunk-down copies the native version replaces (same or very close size).
+    jobs = jobs.filter((j) => j.width < nativeW * 0.8);
+    if (opts.avc) jobs.unshift({ ...nativeJob, kbps: Math.round(hevcKbps * 1.5), codec: 'avc1.64001f', family: 'avc' });
+    if (opts.hevc) jobs.unshift({ ...nativeJob, kbps: hevcKbps, codec: 'hvc1.1.6.L93.90', family: 'hevc' });
+  }
+
   // Quick: only what a 1080p screen actually uses.
   if (opts.quick) {
     const QUICK = new Set(['1080p-hq', '720p', '480p']);
     // (1080p H.264 stays: it's what a tablet without HEVC would watch.)
-    const quick = jobs.filter((j) => QUICK.has(`${j.label}${j.tag ? `-${j.tag}` : ''}`) || (j.family === 'avc' && j.label === '1080p'));
+    const quick = jobs.filter((j) => QUICK.has(`${j.label}${j.tag ? `-${j.tag}` : ''}`) || j.tag === 'src' || (j.family === 'avc' && j.label === '1080p'));
     if (quick.length) jobs = quick;
   }
 
