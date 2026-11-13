@@ -13,13 +13,14 @@ const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const subtitles = require('./subtitles');
+const createWatcher = require('./watchfolder');
 
 const VIDEO_EXT = new Set(['.mp4', '.mkv', '.avi', '.mov', '.m4v', '.wmv', '.webm', '.ts', '.m2ts', '.mpg', '.mpeg', '.flv']);
 
 // Files that make up the app. The updater also uses the list published in the
 // new version's package.json (movieNight.files), so files added later are never missed.
 const APP_FILES = [
-  'server.js', 'host.js', 'prepare.js', 'subtitles.js', 'features.js', 'tmdb.js', 'public/series.js', 'public/home.js', 'public/together.js', 'package.json', 'README.md',
+  'server.js', 'host.js', 'prepare.js', 'subtitles.js', 'watchfolder.js', 'features.js', 'tmdb.js', 'public/series.js', 'public/home.js', 'public/together.js', 'package.json', 'README.md',
   'setup.bat', 'setup-helper.ps1', 'setup-shortcuts.ps1', 'start-movie-night.bat', 'prepare-movie.bat',
   'public/index.html', 'public/app.js', 'public/art.js', 'public/style.css', 'public/icon.png', 'public/icon.ico',
   'public/manifest.webmanifest', 'public/sw.js', 'public/offline.html', 'public/icon-192.png', 'public/icon-512.png',
@@ -28,7 +29,8 @@ const APP_FILES = [
 
 /** "Resident.Evil.2026.REPACK.1080p.AMZN.WEB-DL" -> "Resident Evil (2026)" */
 function cleanTitle(file) {
-  let n = path.basename(file, path.extname(file)).replace(/[._]+/g, ' ').replace(/\s+/g, ' ').trim();
+  // "[SubsPlease] Frieren - 14 (1080p) [ABCD1234]" -> "Frieren - 14"; release-group tags in [] are dropped.
+  let n = path.basename(file, path.extname(file)).replace(/\[[^\]]*\]/g, ' ').replace(/[._]+/g, ' ').replace(/\s+/g, ' ').trim();
   const year = n.match(/^(.*?)[\s([]*((?:19|20)\d{2})(?=[\s)\]]|$)/);
   if (year && year[1].trim()) return `${year[1].trim().replace(/[\s-]+$/, '')} (${year[2]})`;
   n = n.split(/\b(?:2160p|1080p|720p|480p|4k|uhd|hdr|web[- ]?dl|webrip|bluray|blu[- ]?ray|brrip|hdrip|dvdrip|x264|x265|h ?264|h ?265|hevc|remux|repack|proper|extended)\b/i)[0];
@@ -107,8 +109,8 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
   let lastPush = 0;
 
   function publicJobs() {
-    return jobs.map(({ id, title, file, status, progress, error, startedAt, finishedAt, ready, source }) =>
-      ({ id, title, file: path.basename(file), status, progress, error, startedAt, finishedAt, ready: !!ready, source: source || null }));
+    return jobs.map(({ id, title, file, status, progress, error, startedAt, finishedAt, ready, source, auto }) =>
+      ({ id, title, file: path.basename(file), status, progress, error, startedAt, finishedAt, ready: !!ready, source: source || null, auto: !!auto }));
   }
   function pushJobs(force) {
     const now = Date.now();
@@ -117,9 +119,9 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     sendToHosts({ t: 'jobs', jobs: publicJobs() });
   }
 
-  function enqueue({ file, title, denoise, skipAvc, quick, subtitles: subs }) {
+  function enqueue({ file, title, denoise, skipAvc, quick, subtitles: subs, auto }) {
     const job = {
-      id: nextJobId++, file, title, denoise: !!denoise, skipAvc: !!skipAvc, quick: !!quick, subtitles: subs,
+      id: nextJobId++, file, title, denoise: !!denoise, skipAvc: !!skipAvc, quick: !!quick, subtitles: subs, auto: !!auto,
       status: 'queued', progress: null, error: null, log: '', startedAt: null, finishedAt: null,
     };
     jobs.push(job);
@@ -318,7 +320,7 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
         return json(res, 200, {
           version: version(), links: links(), https: httpsStatus(), ...hevcDevices(), tmdbKey: tmdb && tmdb.hasKey(),
           ffmpegFound: !spawnSync(FFMPEG, ['-version'], { windowsHide: true }).error,
-          freeGb: freeSpaceGb(LIBRARY),
+          freeGb: freeSpaceGb(LIBRARY), watchFolder: watcher.folder(),
         });
       }
       if (req.method === 'GET' && pathname === '/api/host/browse') {
@@ -408,6 +410,19 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
         if (!r.ok && r.reason === 'bad-key') return json(res, 400, { error: 'TMDB didn\'t accept that key. Copy the "API Key" (or "API Read Access Token") again.' });
         return json(res, 200, r);
       }
+      if (pathname === '/api/host/watch-folder') {
+        const dir = path.resolve(String(body.dir || ''));
+        try { fs.mkdirSync(dir, { recursive: true }); } catch { return json(res, 400, { error: "Can't use that folder." }); }
+        if (path.resolve(dir) === path.resolve(LIBRARY) || dir.startsWith(path.resolve(LIBRARY) + path.sep)) return json(res, 400, { error: "That's Movie Night's own library folder. Pick a different one." });
+        watcher.setFolder(dir);
+        return json(res, 200, { folder: dir });
+      }
+      if (pathname === '/api/host/open-watch-folder') {
+        fs.mkdirSync(watcher.folder(), { recursive: true });
+        const opener = process.platform === 'win32' ? 'explorer' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+        try { spawn(opener, [watcher.folder()], { detached: true, stdio: 'ignore' }).on('error', () => {}).unref(); } catch { /* headless */ }
+        return json(res, 200, { folder: watcher.folder() });
+      }
       if (pathname === '/api/host/https-retry') { await retryHttps(); return json(res, 200, httpsStatus()); }
       return json(res, 404, { error: 'Not found' });
     } catch (e) {
@@ -437,6 +452,19 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
   }
 
   function onStatus() { /* device capabilities are recorded at hello */ }
+
+  // ---- Auto-add folder ------------------------------------------------------------------
+  const watcher = createWatcher({
+    LIBRARY, config, saveConfig, enqueue, cleanTitle, slugify, ffprobe: FFPROBE,
+    isQueued: (f) => jobs.some((j) => j.file === f && (j.status === 'queued' || j.status === 'running')),
+    skipAvcDefault: () => hevcDevices().hevcConfirmed,
+    subtitleFilesAdded: async (id, items) => {
+      const made = await subtitles.convertSubtitles(items, null, path.join(LIBRARY, id), FFMPEG);
+      if (made.length) { subtitles.addToMeta(path.join(LIBRARY, id), made); libraryChanged(); }
+      return made.length;
+    },
+  });
+  watcher.start();
 
   /** On startup: if any app file is missing (e.g. an interrupted update), fetch it from GitHub. */
   async function repairMissing() {

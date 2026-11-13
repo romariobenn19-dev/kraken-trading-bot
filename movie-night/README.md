@@ -77,6 +77,16 @@ Use **Google Chrome** on the laptop and on her tablet. Chrome plays the HEVC ver
 2. Her: tap her bookmark, with Tailscale on.
 3. Pick a movie, press ▶, and talk on a WhatsApp call.
 
+## Auto-add folder (easiest)
+
+Save movies into **Videos\Movie Night** on the laptop. That's it: each one is added and converted by itself.
+
+- **Subtitles:** save the subtitle file in the same folder (or in the movie's own subfolder). It's matched automatically, even if the names differ: `Frieren - 14.mkv` + `[Group] Frieren - 14 [English].srt`, or a film's folder with `english.srt` inside. Several languages work (`Film.en.srt`, `Film.el.srt`).
+- **Subtitles you save later** are added to the movie automatically. No reconverting.
+- Half-finished downloads (`.part`, `.crdownload`) are ignored until they're done, and "sample" clips are skipped.
+- Your original files are never moved or deleted (Movie Night needs them for adding built-in subtitles later).
+- On the laptop, the home screen shows the folder with **Open folder** and **Change…** buttons.
+
 ## Adding movies
 
 In Movie Night on your laptop, click **＋ Add movie**:

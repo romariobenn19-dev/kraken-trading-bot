@@ -822,6 +822,7 @@ async function loadHostInfo() {
     $('herLink').textContent = hostInfo.links.her || 'Tailscale is off — start Tailscale on this laptop';
     $('copyLink').disabled = !hostInfo.links.her;
     renderHttpsNote();
+    if (hostInfo.watchFolder) { $('watchPath').textContent = hostInfo.watchFolder; $('watchRow').classList.remove('hidden'); }
     if (!hostInfo.ffmpegFound) toast('FFmpeg is missing — run setup.bat once so movies can be prepared.', 8000);
   } catch (e) { toast(e.message); }
 }
@@ -878,7 +879,7 @@ function renderJobs(jobs) {
       const srcP = Math.min(j.source.height, Math.round(j.source.width * 9 / 16));
       detail += ` · original file: ${j.source.width}×${j.source.height}` + (srcP < 700 ? ' (that\'s as sharp as this file goes)' : '');
     }
-    el.querySelector('b').textContent = j.title;
+    el.querySelector('b').textContent = j.auto ? `📂 ${j.title}` : j.title;
     el.querySelector('.muted').textContent = detail;
     const btn = el.querySelector('button');
     if (j.status === 'running' || j.status === 'queued') {
@@ -904,7 +905,8 @@ $('backToBrowse').onclick = () => { $('confirmView').classList.add('hidden'); $(
 let pickerMode = { kind: 'movie' };
 function openPicker(kind = 'movie', onPick = null) {
   pickerMode = { kind, onPick };
-  $('picker').querySelector('.sheet-head b').textContent = kind === 'subs' ? 'Choose a subtitle file' : 'Add a movie';
+  $('picker').querySelector('.sheet-head b').textContent = kind === 'subs' ? 'Choose a subtitle file' : kind === 'folder' ? 'Choose the auto-add folder' : 'Add a movie';
+  $('useFolder').classList.toggle('hidden', kind !== 'folder');
   $('picker').classList.remove('hidden');
   $('confirmView').classList.add('hidden');
   $('browseView').classList.remove('hidden');
@@ -928,6 +930,7 @@ async function browseTo(dir) {
     places.appendChild(b);
   }
   $('crumb').textContent = data.dir || 'Choose a place to look for your movie';
+  $('useFolder').disabled = !data.dir;
   $('upBtn').disabled = !data.dir;
   const list = $('entries');
   list.innerHTML = '';
@@ -944,7 +947,7 @@ async function browseTo(dir) {
     b.innerHTML = `<span>${e.type === 'dir' ? '📁' : '🎬'}</span><span class="name"></span><span class="muted small"></span>`;
     b.querySelector('.name').textContent = e.name;
     if (e.type === 'file') b.querySelector('.muted').textContent = fmtSize(e.size);
-    b.onclick = () => (e.type === 'dir' ? browseTo(e.path) : pickFile(e));
+    b.onclick = () => (e.type === 'dir' ? browseTo(e.path) : pickerMode.kind === 'folder' ? null : pickFile(e));
     list.appendChild(b);
   }
   list.scrollTop = 0;
@@ -1458,3 +1461,19 @@ function isShaky() {
   try { return JSON.parse(store.get('mn_stalls') || '[]').filter((t) => t > Date.now() - 7 * 86400000).length >= 2; }
   catch { return false; }
 }
+
+// ---- Auto-add folder (laptop) -----------------------------------------------------
+$('watchOpen').onclick = () => api('/api/host/open-watch-folder', {}).catch((e) => toast(e.message));
+$('watchChange').onclick = () => {
+  openPicker('folder');
+  if (hostInfo && hostInfo.watchFolder) browseTo(hostInfo.watchFolder);
+};
+$('useFolder').onclick = async () => {
+  if (!currentDir || !currentDir.dir) return;
+  try {
+    const r = await api('/api/host/watch-folder', { dir: currentDir.dir });
+    closePicker();
+    toast(`Auto-add folder: ${r.folder}`);
+    loadHostInfo();
+  } catch (e) { toast(e.message); }
+};

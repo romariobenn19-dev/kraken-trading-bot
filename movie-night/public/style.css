@@ -556,3 +556,10 @@ textarea#noteText { background: var(--bg); border: 1px solid var(--line); border
   .note-toast, .skip-intro, .next-up { bottom: 190px; }
   .curtain-count { font-size: 80px; }
 }
+
+/* Auto-add folder row (laptop) */
+.watch-row { margin: 0 20px 12px; padding: 8px 8px 8px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; }
+.watch-row span { flex: 1 1 320px; }
+.watch-row code { font-size: 13px; background: var(--bg); padding: 1px 6px; border-radius: 6px; word-break: break-all; }
+#useFolder { margin: 0; padding: 6px 14px; }

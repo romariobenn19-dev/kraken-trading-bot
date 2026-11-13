@@ -58,6 +58,11 @@
         <button id="personalBtn" class="ghost small">🎀 Personalize</button>
         <button id="updateBtn" class="ghost small">Check for updates</button>
       </div>
+      <div id="watchRow" class="watch-row hidden">
+        <span>📂 <b>Auto-add folder:</b> save movies (and their subtitle files) in <code id="watchPath">…</code> and they're added by themselves.</span>
+        <button id="watchOpen" class="ghost small">Open folder</button>
+        <button id="watchChange" class="ghost small">Change…</button>
+      </div>
       <div id="httpsNote" class="https-note hidden"></div>
       <div id="jobs" class="jobs"></div>
 
@@ -162,6 +167,7 @@
         <div class="crumb-row">
           <button id="upBtn" class="ghost small" title="Up one folder">↑ Up</button>
           <div id="crumb" class="crumb muted small"></div>
+          <button id="useFolder" class="primary small hidden">Use this folder</button>
         </div>
         <div id="entries" class="entries"></div>
       </div>
