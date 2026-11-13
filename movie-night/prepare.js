@@ -35,6 +35,10 @@ const FFMPEG = process.env.FFMPEG || 'ffmpeg';
 const FFPROBE = process.env.FFPROBE || 'ffprobe';
 const LIBRARY = process.env.LIBRARY || path.join(__dirname, 'library');
 const SEGMENT_SECONDS = 4;
+// --progress-json: machine-readable progress for the Movie Night app ("@@{...}" lines).
+let JSON_PROGRESS = false;
+const step = { n: 0, of: 0 };
+function emit(obj) { if (JSON_PROGRESS) process.stdout.write(`@@${JSON.stringify(obj)}\n`); }
 
 // Quality ladder. Bitrates are averages in kbit/s, tuned for high quality per bit.
 // HEVC gives roughly the same picture as H.264 at ~60% of the size.
@@ -74,6 +78,7 @@ function parseArgs(argv) {
     else if (a === '--no-avc') opts.avc = false;
     else if (a === '--no-hevc') opts.hevc = false;
     else if (a === '--denoise') opts.denoise = true;
+    else if (a === '--progress-json') JSON_PROGRESS = true;
     else if (a === '-h' || a === '--help') { printHelp(); process.exit(0); }
     else if (a.startsWith('--')) die(`Unknown option ${a}`);
     else rest.push(a);
@@ -207,7 +212,8 @@ function runFfmpeg(args, durationSec, label, cwd) {
         last = pct;
         const elapsed = (Date.now() - started) / 1000;
         const eta = pct > 0 ? Math.round(elapsed * (100 - pct) / pct) : 0;
-        process.stdout.write(`\r  ${label.padEnd(14)} ${String(pct).padStart(3)}%  ` +
+        if (JSON_PROGRESS) emit({ label, pct, eta, step: step.n, steps: step.of });
+        else process.stdout.write(`\r  ${label.padEnd(14)} ${String(pct).padStart(3)}%  ` +
           (pct > 0 ? `~${fmtDuration(eta)} left   ` : '              '));
       }
     });
@@ -320,7 +326,9 @@ async function main() {
   for (const j of jobs) if (j.tag === 'hq') j.best = true;
 
   const done = { hevc: [], avc: [] };
+  step.of = jobs.length;
   for (const job of jobs) {
+    step.n++;
     const dirName = `${job.label}${job.tag ? `-${job.tag}` : ''}_${job.family}`;
     const dir = path.join(outDir, dirName);
     const height = even((job.width * srcH) / srcW);
@@ -409,6 +417,7 @@ async function main() {
   fs.writeFileSync(path.join(outDir, 'meta.json'), JSON.stringify(meta, null, 2));
 
   const totalGb = [...done.hevc, ...done.avc].reduce((s, r) => s + r.bytes, 0) / 1e9;
+  emit({ done: true, id, title, gb: totalGb });
   console.log(`\nDone! "${title}" is ready in Movie Night (${totalGb.toFixed(1)} GB on disk).`);
   for (const r of [...done.hevc, ...done.avc]) {
     const name = r.label + (r.dir.includes('-hq_') ? ' HQ' : '');

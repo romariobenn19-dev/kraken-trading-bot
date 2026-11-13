@@ -1,6 +1,6 @@
 {
   "name": "movie-night",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Synced long-distance movie nights: the host laptop does the heavy lifting, the partner's tablet just plays.",
   "main": "server.js",
@@ -12,7 +12,14 @@
     "node": ">=18"
   },
   "dependencies": {
-    "hls.js": "^1.5.20",
-    "ws": "^8.18.0"
+    "hls.js": "1.5.20",
+    "ws": "8.23.0"
+  },
+  "movieNight": {
+    "updateSource": {
+      "repo": "romariobenn19-dev/kraken-trading-bot",
+      "branch": "claude/sleepy-planck-uv5qqu",
+      "path": "movie-night"
+    }
   }
 }

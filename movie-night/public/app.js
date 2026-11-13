@@ -31,6 +31,8 @@ let clockOffset = 0;       // serverTime - localTime
 let clockSamples = [];
 let wakeLock = null;
 let openId = null;          // movie currently open (or opening)
+let isHost = false;         // true on the laptop running Movie Night
+let appVersion = null;
 
 const serverNow = () => Date.now() + clockOffset;
 const expectedPos = () => (!state ? 0 : state.paused ? state.pos : state.pos + (serverNow() - state.at) / 1000);
@@ -68,6 +70,10 @@ function connect() {
     else if (m.t === 'pong') onPong(m);
     else if (m.t === 'peers') { peers = m.peers; renderPeers(); renderHold(); }
     else if (m.t === 'react') floatEmoji(m.emoji, m.from);
+    else if (m.t === 'welcome') onWelcome(m);
+    else if (m.t === 'jobs') renderJobs(m.jobs);
+    else if (m.t === 'library') refreshMovies();
+    else if (m.t === 'restarting') { toast('Updating Movie Night… back in a few seconds'); appVersion = 'restarting'; }
   };
   ws.onclose = () => {
     $('netBanner').classList.remove('hidden');
@@ -107,6 +113,15 @@ async function refreshMovies() {
     b.querySelector('b').textContent = mv.title;
     b.querySelector('span').textContent = `${fmt(mv.duration)} · up to ${best}${mv.subtitles ? ' · CC' : ''}`;
     b.onclick = () => send({ t: 'load', movieId: mv.id });
+    if (isHost) {
+      const del = document.createElement('span');
+      del.className = 'del';
+      del.setAttribute('role', 'button');
+      del.title = 'Delete this movie from the laptop';
+      del.textContent = '🗑';
+      del.onclick = (e) => { e.stopPropagation(); deleteMovie(mv); };
+      b.appendChild(del);
+    }
     grid.appendChild(b);
   }
 }
@@ -353,7 +368,8 @@ function reportStatus() {
   send({
     t: 'status', movieId: meta.id, ct: video.currentTime, buffer: ahead,
     full: dur > 0 && video.currentTime + ahead >= dur - 1,
-    stalled, quality: lv ? labelFor(lv).split(' · ')[0] : '', bw: hls ? Math.round(hls.bandwidthEstimate || 0) : 0,
+    stalled, quality: lv ? labelFor(lv).split(' · ')[0] : '',
+    codec: lv && lv.videoCodec ? (/^(hvc1|hev1)/.test(lv.videoCodec) ? 'hevc' : 'avc') : '', bw: hls ? Math.round(hls.bandwidthEstimate || 0) : 0,
   });
 }
 setInterval(reportStatus, 1000);
@@ -506,4 +522,193 @@ function fmt(s) {
 }
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ---- Host tools (only on the laptop running Movie Night) -------------------------
+let hostInfo = null;
+let pickedFile = null;
+let currentDir = null;
+
+function onWelcome(m) {
+  // After an update the server restarts with new code: reload to pick it up.
+  if (appVersion && appVersion !== m.version) { location.reload(); return; }
+  appVersion = m.version;
+  isHost = !!m.isHost;
+  $('hostBar').classList.toggle('hidden', !isHost);
+  if (isHost) { loadHostInfo(); refreshMovies(); }
+}
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? { cache: 'no-store' } : {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || `Something went wrong (${r.status})`);
+  return data;
+}
+
+async function loadHostInfo() {
+  try {
+    hostInfo = await api('/api/host/info');
+    $('herLink').textContent = hostInfo.links.her || 'Tailscale is off — start Tailscale on this laptop';
+    $('copyLink').disabled = !hostInfo.links.her;
+    if (!hostInfo.ffmpegFound) toast('FFmpeg is missing — run setup.bat once so movies can be prepared.', 8000);
+  } catch (e) { toast(e.message); }
+}
+
+$('copyLink').onclick = async () => {
+  if (!hostInfo || !hostInfo.links.her) return;
+  try { await navigator.clipboard.writeText(hostInfo.links.her); toast('Copied! Send it to her on WhatsApp.'); }
+  catch { prompt('Copy her link:', hostInfo.links.her); }
+};
+
+$('updateBtn').onclick = async () => {
+  const btn = $('updateBtn');
+  btn.disabled = true;
+  btn.textContent = 'Checking…';
+  try {
+    const info = await api('/api/host/update');
+    if (!info.newer) { toast(`You're up to date (version ${info.current}).`); return; }
+    if (!confirm(`Update Movie Night from ${info.current} to ${info.latest}? It restarts in a few seconds.`)) return;
+    btn.textContent = 'Updating…';
+    await api('/api/host/update', {});
+    toast('Updated! Restarting…');
+  } catch (e) { toast(`Couldn't update: ${e.message}`, 7000); }
+  finally { btn.disabled = false; btn.textContent = 'Check for updates'; }
+};
+
+async function deleteMovie(mv) {
+  if (!confirm(`Delete "${mv.title}" from Movie Night? Your original movie file is not touched.`)) return;
+  try { await api('/api/host/delete', { id: mv.id }); toast('Deleted.'); } catch (e) { toast(e.message); }
+}
+
+// Conversion progress
+function renderJobs(jobs) {
+  const box = $('jobs');
+  box.innerHTML = '';
+  for (const j of jobs) {
+    const el = document.createElement('div');
+    el.className = `job ${j.status}`;
+    const p = j.progress;
+    let detail = '', pct = 0;
+    if (j.status === 'queued') detail = 'Waiting for the movie before it to finish';
+    else if (j.status === 'running') {
+      if (p && p.steps) {
+        pct = ((p.step - 1) + p.pct / 100) / p.steps * 100;
+        detail = `Making ${p.label} (${p.step} of ${p.steps}) · ${p.pct}%` + (p.eta ? ` · this part ~${fmt(p.eta)} left` : '');
+      } else detail = 'Starting…';
+    } else if (j.status === 'done') { detail = 'Ready to watch ✓'; pct = 100; }
+    else if (j.status === 'cancelled') detail = 'Stopped';
+    else if (j.status === 'failed') detail = 'Something went wrong';
+    el.innerHTML = `<div class="job-top"><b></b><span class="muted small"></span><button class="ghost small"></button></div>
+      ${j.status === 'running' || j.status === 'done' ? `<div class="meter"><i style="width:${pct.toFixed(1)}%"></i></div>` : ''}
+      ${j.error ? '<pre></pre>' : ''}`;
+    el.querySelector('b').textContent = j.title;
+    el.querySelector('.muted').textContent = detail;
+    const btn = el.querySelector('button');
+    if (j.status === 'running' || j.status === 'queued') {
+      btn.textContent = 'Stop';
+      btn.onclick = () => { if (confirm(`Stop preparing "${j.title}"?`)) api('/api/host/cancel', { id: j.id }).catch((e) => toast(e.message)); };
+    } else {
+      btn.textContent = 'Dismiss';
+      btn.onclick = () => api('/api/host/clear', {}).catch(() => {});
+    }
+    if (j.error) el.querySelector('pre').textContent = j.error;
+    box.appendChild(el);
+  }
+}
+
+// File picker
+$('addMovieBtn').onclick = () => openPicker();
+$('pickerClose').onclick = closePicker;
+$('picker').addEventListener('click', (e) => { if (e.target === $('picker')) closePicker(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('picker').classList.contains('hidden')) closePicker(); });
+$('upBtn').onclick = () => { if (currentDir && currentDir.parent) browseTo(currentDir.parent); else browseTo(null); };
+$('backToBrowse').onclick = () => { $('confirmView').classList.add('hidden'); $('browseView').classList.remove('hidden'); };
+
+function openPicker() {
+  $('picker').classList.remove('hidden');
+  $('confirmView').classList.add('hidden');
+  $('browseView').classList.remove('hidden');
+  browseTo(store.get('mn_lastDir') || null);
+}
+function closePicker() { $('picker').classList.add('hidden'); }
+
+async function browseTo(dir) {
+  let data;
+  try { data = await api(`/api/host/browse${dir ? `?dir=${encodeURIComponent(dir)}` : ''}`); }
+  catch (e) { toast(e.message); return; }
+  if (data.error && dir) { toast(data.error); if (dir !== null) return browseTo(null); }
+  currentDir = data;
+  if (data.dir) store.set('mn_lastDir', data.dir);
+  const places = $('places');
+  places.innerHTML = '';
+  for (const p of data.places || []) {
+    const b = document.createElement('button');
+    b.textContent = p.label;
+    b.onclick = () => browseTo(p.path);
+    places.appendChild(b);
+  }
+  $('crumb').textContent = data.dir || 'Choose a place to look for your movie';
+  $('upBtn').disabled = !data.dir;
+  const list = $('entries');
+  list.innerHTML = '';
+  if (!data.dir) {
+    list.innerHTML = '<p class="muted small" style="padding:8px 10px">Your movies are usually in <b>Downloads</b> or <b>Videos</b>.</p>';
+    return;
+  }
+  if (!data.entries.length) {
+    list.innerHTML = '<p class="muted small" style="padding:8px 10px">No folders or movie files here.</p>';
+  }
+  for (const e of data.entries) {
+    const b = document.createElement('button');
+    b.className = `entry ${e.type}`;
+    b.innerHTML = `<span>${e.type === 'dir' ? '📁' : '🎬'}</span><span class="name"></span><span class="muted small"></span>`;
+    b.querySelector('.name').textContent = e.name;
+    if (e.type === 'file') b.querySelector('.muted').textContent = fmtSize(e.size);
+    b.onclick = () => (e.type === 'dir' ? browseTo(e.path) : pickFile(e));
+    list.appendChild(b);
+  }
+  list.scrollTop = 0;
+}
+
+function pickFile(e) {
+  pickedFile = e;
+  $('browseView').classList.add('hidden');
+  $('confirmView').classList.remove('hidden');
+  $('confirmFile').textContent = `${e.name} · ${fmtSize(e.size)}`;
+  $('titleInput').value = e.title;
+  $('optDenoise').checked = false;
+  const confirmed = hostInfo && hostInfo.hevcConfirmed;
+  $('optSkipAvc').checked = !!confirmed;
+  $('skipHint').textContent = confirmed
+    ? 'Her tablet already played an HEVC movie smoothly, so the H.264 backups aren\'t needed.'
+    : 'Leave this off until her tablet has played a movie in HEVC. The app will remember once it has.';
+  $('titleInput').focus();
+}
+
+$('startPrep').onclick = async () => {
+  if (!pickedFile) return;
+  try {
+    await api('/api/host/prepare', {
+      file: pickedFile.path, title: $('titleInput').value.trim(),
+      denoise: $('optDenoise').checked, skipAvc: $('optSkipAvc').checked,
+    });
+    closePicker();
+    toast('Preparing in the background. You can keep using your laptop.');
+  } catch (e) { toast(e.message); }
+};
+
+function fmtSize(bytes) {
+  if (!bytes) return '';
+  return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`;
+}
+
+let toastTimer = null;
+function toast(text, ms = 4000) {
+  const t = $('toast');
+  t.textContent = text;
+  t.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.add('hidden'), ms);
 }

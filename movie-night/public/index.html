@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#0d0b14">
   <meta name="mobile-web-app-capable" content="yes">
   <title>Movie Night</title>
+  <link rel="icon" href="/icon.png">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -27,9 +28,22 @@
       <h2>🎬 Movie Night</h2>
       <div id="peersLib" class="peers"></div>
     </header>
+
+    <!-- Only shown on the host laptop -->
+    <div id="hostBar" class="host-bar hidden">
+      <button id="addMovieBtn" class="primary">＋ Add movie</button>
+      <div class="her-link">
+        <span class="muted small">Her link</span>
+        <code id="herLink">…</code>
+        <button id="copyLink" class="ghost small">Copy</button>
+      </div>
+      <button id="updateBtn" class="ghost small">Check for updates</button>
+    </div>
+    <div id="jobs" class="jobs"></div>
+
     <p class="muted pad">Pick a movie. It opens on both screens.</p>
     <div id="movies" class="grid"></div>
-    <p id="noMovies" class="muted pad hidden">No movies yet. On the laptop, drag a movie file onto <b>prepare-movie.bat</b>.</p>
+    <p id="noMovies" class="muted pad hidden">No movies yet.</p>
   </section>
 
   <!-- Player -->
@@ -75,6 +89,39 @@
       </div>
     </div>
   </section>
+
+  <!-- Add-movie picker (host only) -->
+  <div id="picker" class="modal hidden" role="dialog" aria-modal="true" aria-label="Add a movie">
+    <div class="sheet">
+      <header class="sheet-head">
+        <b>Add a movie</b>
+        <button id="pickerClose" class="ghost small" aria-label="Close">✕</button>
+      </header>
+      <div id="browseView">
+        <div id="places" class="places"></div>
+        <div class="crumb-row">
+          <button id="upBtn" class="ghost small" title="Up one folder">↑ Up</button>
+          <div id="crumb" class="crumb muted small"></div>
+        </div>
+        <div id="entries" class="entries"></div>
+      </div>
+      <div id="confirmView" class="confirm hidden">
+        <div class="muted small" id="confirmFile"></div>
+        <label for="titleInput">Title</label>
+        <input id="titleInput" maxlength="120">
+        <label class="check"><input type="checkbox" id="optDenoise"> <span>Clean up film grain <span class="muted">(sharper for older or grainy films)</span></span></label>
+        <label class="check"><input type="checkbox" id="optSkipAvc"> <span>Skip H.264 backups <span class="muted">(about a third faster)</span></span></label>
+        <div id="skipHint" class="muted small"></div>
+        <div class="row">
+          <button id="backToBrowse" class="ghost">‹ Back</button>
+          <span class="spacer"></span>
+          <button id="startPrep" class="primary">Prepare movie</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
 
   <script src="/vendor/hls.min.js"></script>
   <script src="/app.js"></script>

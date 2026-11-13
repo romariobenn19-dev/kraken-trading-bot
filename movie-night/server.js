@@ -7,7 +7,10 @@
  *  - Pauses everyone if anyone's connection falls behind, and resumes once
  *    every viewer has a healthy buffer again
  *
- * Start:  node server.js      (or double-click start-movie-night.bat on Windows)
+ * Start:  node server.js [--open | --background]
+ *   --open        open the host page in the browser (if already running, just open it)
+ *   --background  quiet start used at Windows login
+ * On Windows, the "Movie Night" desktop shortcut made by setup.bat does this for you.
  */
 'use strict';
 
@@ -16,13 +19,16 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const { spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
+const createHost = require('./host');
 
 const ROOT = __dirname;
 const PUBLIC = path.join(ROOT, 'public');
 const LIBRARY = process.env.LIBRARY || path.join(ROOT, 'library');
 const CONFIG_FILE = path.join(ROOT, 'config.json');
 const PORT = Number(process.env.PORT || 8080);
+const ARGS = new Set(process.argv.slice(2));
 
 // ---- Config: a secret key so only people with your link can watch ----------
 function loadConfig() {
@@ -35,6 +41,7 @@ function loadConfig() {
   return cfg;
 }
 const config = loadConfig();
+function saveConfig() { fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2)); }
 fs.mkdirSync(LIBRARY, { recursive: true });
 
 // ---- Buffering policy ---------------------------------------------------------
@@ -64,8 +71,14 @@ function safeEqual(a, b) {
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 }
 
+/** Requests from the laptop itself: the host. Only the host can add/delete movies or update. */
+function isLocal(req) {
+  const a = (req.socket && req.socket.remoteAddress) || '';
+  return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
+}
+
 function isAuthorized(req, url) {
-  return safeEqual(url.searchParams.get('key'), config.key) || safeEqual(parseCookies(req.headers.cookie).mn_key, config.key);
+  return isLocal(req) || safeEqual(url.searchParams.get('key'), config.key) || safeEqual(parseCookies(req.headers.cookie).mn_key, config.key);
 }
 
 function sendFile(req, res, file, cacheControl) {
@@ -113,7 +126,8 @@ function listMovies() {
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
-  if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); res.end(); return; }
+  const hostApi = url.pathname.startsWith('/api/host/');
+  if (req.method !== 'GET' && req.method !== 'HEAD' && !(hostApi && req.method === 'POST')) { res.writeHead(405); res.end(); return; }
 
   if (!isAuthorized(req, url)) {
     res.writeHead(401, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -129,6 +143,14 @@ const server = http.createServer((req, res) => {
   let pathname;
   try { pathname = decodeURIComponent(url.pathname); } catch { res.writeHead(400); res.end(); return; }
 
+  if (hostApi) {
+    if (!isLocal(req)) { res.writeHead(403); res.end('Only on the host laptop'); return; }
+    // Block other websites from poking the host API through the browser.
+    const origin = req.headers.origin;
+    if (origin && new URL(origin).host !== req.headers.host) { res.writeHead(403); res.end(); return; }
+    host.handle(req, res, pathname, url);
+    return;
+  }
   if (pathname === '/api/movies') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify(listMovies()));
@@ -163,7 +185,7 @@ const room = {
   stalls: 0,          // stalls during this movie; raises the resume buffer
   version: 0,
 };
-const clients = new Map(); // ws -> { id, name, role, buffer, full, stalled, ct, movieId, quality, bw, seenAt }
+const clients = new Map(); // ws -> { id, name, role, isHost, buffer, full, stalled, ct, movieId, quality, bw }
 let nextId = 1;
 
 function nowPos() {
@@ -242,7 +264,7 @@ function handle(ws, c, msg) {
   switch (msg.t) {
     case 'hello':
       c.name = String(msg.name || c.name).slice(0, 30);
-      c.role = msg.role === 'host' ? 'host' : 'guest';
+      c.role = c.isHost || msg.role === 'host' ? 'host' : 'guest';
       send(ws, publicState());
       break;
     case 'ping':
@@ -283,6 +305,7 @@ function handle(ws, c, msg) {
       c.movieId = msg.movieId || null;
       c.quality = String(msg.quality || '').slice(0, 40);
       c.bw = Number(msg.bw) || 0;
+      host.onStatus(c, msg);
       evaluate();
       break;
     case 'react':
@@ -298,12 +321,14 @@ server.on('upgrade', (req, socket, head) => {
   if (url.pathname !== '/sync' || !isAuthorized(req, url)) {
     socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); socket.destroy(); return;
   }
-  wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws));
+  wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
 });
 
-wss.on('connection', (ws) => {
-  const c = { id: nextId++, name: 'Viewer', role: 'guest', buffer: 0, full: false, stalled: false, ct: 0, movieId: null, quality: '', bw: 0 };
+wss.on('connection', (ws, req) => {
+  const c = { id: nextId++, name: 'Viewer', role: 'guest', isHost: isLocal(req), buffer: 0, full: false, stalled: false, ct: 0, movieId: null, quality: '', bw: 0 };
   clients.set(ws, c);
+  send(ws, { t: 'welcome', isHost: c.isHost, version: appVersion() });
+  if (c.isHost) send(ws, { t: 'jobs', jobs: host.publicJobs() });
   ws.isAlive = true;
   ws.on('pong', () => { ws.isAlive = true; });
   ws.on('message', (data) => {
@@ -341,17 +366,79 @@ function addresses() {
   return out;
 }
 
-server.listen(PORT, '0.0.0.0', () => {
+function appVersion() {
+  try { return JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version; } catch { return '?'; }
+}
+
+function links() {
   const { tailscale, lan } = addresses();
   const k = encodeURIComponent(config.key);
-  console.log('\n  Movie Night is running.\n');
-  console.log(`  You (on this laptop):   http://localhost:${PORT}/?key=${k}&role=host`);
-  if (tailscale.length) {
-    console.log(`  Send this to her:       http://${tailscale[0]}:${PORT}/?key=${k}`);
-  } else {
-    console.log('  (Tailscale not detected - install it so she can reach you from anywhere; see README.)');
+  return {
+    host: `http://localhost:${PORT}/?key=${k}`,
+    her: tailscale.length ? `http://${tailscale[0]}:${PORT}/?key=${k}` : null,
+    lan: lan.map((ip) => `http://${ip}:${PORT}/?key=${k}`),
+  };
+}
+
+function openBrowser(url) {
+  const opts = { detached: true, stdio: 'ignore', windowsHide: true };
+  try {
+    if (process.platform === 'win32') spawn('rundll32', ['url.dll,FileProtocolHandler', url], opts).unref();
+    else if (process.platform === 'darwin') spawn('open', [url], opts).unref();
+    else spawn('xdg-open', [url], opts).on('error', () => {}).unref();
+  } catch { /* no browser available */ }
+}
+
+/** Restart after an update: hand over to a fresh copy of the server. */
+function restart() {
+  broadcast({ t: 'restarting' });
+  setTimeout(() => {
+    for (const ws of wss.clients) ws.terminate();
+    server.close();
+    const log = fs.openSync(path.join(ROOT, 'movie-night.log'), 'a');
+    spawn(process.execPath, [path.join(ROOT, 'server.js'), '--restarted'],
+      { cwd: ROOT, detached: true, stdio: ['ignore', log, log], windowsHide: true, env: process.env }).unref();
+    process.exit(0);
+  }, 400);
+}
+
+const host = createHost({
+  ROOT, LIBRARY, config, saveConfig, links, restart,
+  sendToHosts(msg) {
+    const data = JSON.stringify(msg);
+    for (const [ws, c] of clients) if (c.isHost && ws.readyState === ws.OPEN) ws.send(data);
+  },
+  libraryChanged() { broadcast({ t: 'library' }); },
+  onMovieDeleted(id) {
+    if (room.movieId === id) {
+      room.movieId = null; room.wantPlay = false; room.hold = null;
+      setPosition(0, true);
+      changed();
+    }
+  },
+});
+
+let listenTries = 0;
+server.on('error', (err) => {
+  if (err.code !== 'EADDRINUSE') throw err;
+  if (ARGS.has('--restarted') && listenTries++ < 40) {
+    setTimeout(() => server.listen(PORT, '0.0.0.0'), 500);
+    return;
   }
-  for (const ip of lan) console.log(`  Same Wi-Fi only:        http://${ip}:${PORT}/?key=${k}`);
+  // Already running (e.g. started at login): just open it.
+  if (ARGS.has('--open')) openBrowser(links().host);
+  else if (!ARGS.has('--background')) console.log(`\n  Movie Night is already running. Open: ${links().host}\n`);
+  setTimeout(() => process.exit(0), 500);
+});
+
+server.listen(PORT, '0.0.0.0', () => {
+  const l = links();
+  console.log(`\n  Movie Night ${appVersion()} is running.\n`);
+  console.log(`  You (on this laptop):   ${l.host}`);
+  if (l.her) console.log(`  Send this to her:       ${l.her}`);
+  else console.log('  (Tailscale not detected - install it so she can reach you from anywhere; see README.)');
+  for (const u of l.lan) console.log(`  Same Wi-Fi only:        ${u}`);
   console.log(`\n  Movies: ${listMovies().length} ready in ${LIBRARY}`);
-  console.log('  Keep this window open while you watch. Ctrl+C to stop.\n');
+  console.log('  Everything else - adding movies, her link, updates - is in the app.\n');
+  if (ARGS.has('--open')) openBrowser(l.host);
 });
