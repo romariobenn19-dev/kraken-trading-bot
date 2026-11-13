@@ -21,11 +21,33 @@ const os = require('os');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
+
+// Finish an update that couldn't swap every file last time (Windows had one busy).
+// Runs first thing, before the rest of the app is loaded.
+(function finishPendingUpdate() {
+  const walk = (dir, depth) => {
+    let list = [];
+    try { list = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of list) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) { if (depth < 1 && e.name === 'public') walk(full, depth + 1); }
+      else if (e.name.endsWith('.new')) {
+        try { fs.renameSync(full, full.slice(0, -4)); } catch {
+          try { fs.copyFileSync(full, full.slice(0, -4)); fs.rmSync(full, { force: true }); } catch { /* try again next start */ }
+        }
+      }
+    }
+  };
+  walk(__dirname, 0);
+})();
+
 const createHost = require('./host');
 const createFeatures = require('./features');
 const createTmdb = require('./tmdb');
 
 const ROOT = __dirname;
+
+
 const PUBLIC = path.join(ROOT, 'public');
 const LIBRARY = process.env.LIBRARY || path.join(ROOT, 'library');
 const CONFIG_FILE = path.join(ROOT, 'config.json');

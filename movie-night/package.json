@@ -1,6 +1,6 @@
 {
   "name": "movie-night",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "private": true,
   "description": "Synced long-distance movie nights: the host laptop does the heavy lifting, the partner's tablet just plays.",
   "main": "server.js",

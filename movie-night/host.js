@@ -322,6 +322,17 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     return { current: version(), latest: pkg.version, newer: compareVersions(pkg.version, version()) > 0 };
   }
 
+  /** Move src over dest, retrying while Windows reports the file busy; copy as a last resort. */
+  async function replaceFile(src, dest) {
+    for (let i = 0; i < 25; i++) {
+      try { fs.renameSync(src, dest); return true; } catch (e) {
+        if (!['EPERM', 'EBUSY', 'EACCES'].includes(e.code)) throw e;
+        await new Promise((r) => setTimeout(r, 100 + i * 30));
+      }
+    }
+    try { fs.copyFileSync(src, dest); fs.rmSync(src, { force: true }); return true; } catch { return false; }
+  }
+
   async function applyUpdate() {
     if (runningJobs.size) throw new Error('A movie is still converting. Try again when it has finished.');
     const info = await checkUpdate();
@@ -338,13 +349,24 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     }
     if (!files['server.js'] || !files['package.json']) throw new Error('Update download was incomplete - nothing was changed.');
     const oldDeps = JSON.stringify(JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).dependencies);
-    for (const [f, data] of Object.entries(files)) {
+    // 1. Write every new file next to the old one as "<name>.new".
+    const order = Object.keys(files).filter((f) => f !== 'package.json').concat('package.json'); // version number last
+    for (const f of order) {
       const target = path.join(ROOT, f);
       fs.mkdirSync(path.dirname(target), { recursive: true });
       // Windows scripts need Windows line endings.
-      const out = /\.(bat|cmd|vbs|ps1)$/i.test(f) ? Buffer.from(data.toString('utf8').replace(/\r?\n/g, '\r\n')) : data;
+      const out = /\.(bat|cmd|vbs|ps1)$/i.test(f) ? Buffer.from(files[f].toString('utf8').replace(/\r?\n/g, '\r\n')) : files[f];
       fs.writeFileSync(target + '.new', out);
-      fs.renameSync(target + '.new', target);
+    }
+    // 2. Swap them in. Windows sometimes holds a file for a moment (antivirus scanning it),
+    //    so retry; anything still stuck is finished automatically on the next start.
+    const stuck = [];
+    for (const f of order) {
+      if (!(await replaceFile(path.join(ROOT, f) + '.new', path.join(ROOT, f)))) stuck.push(f);
+    }
+    if (stuck.length) {
+      setTimeout(restart, 300); // the next start finishes the swap (nothing holds the files then)
+      return { ...info, updated: true, finishing: stuck };
     }
     const newDeps = JSON.stringify(JSON.parse(files['package.json'].toString('utf8')).dependencies);
     if (newDeps !== oldDeps) {
