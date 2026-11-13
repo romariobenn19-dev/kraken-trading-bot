@@ -16,6 +16,8 @@
  *                         "Film.mkv" is picked up automatically.
  *   --sub-track N         Use embedded subtitle track N (0 = first) instead
  *   --subtitles JSON      Exact subtitle choices (used by the app)
+ *   --first-only          Only make the version you watch (the app makes backups later)
+ *   --keep-subs           Keep the subtitles already prepared (don't read them again)
  *   --audio-track N       Which audio track to use (0 = first, default)
  *   --encoder X           auto | nvenc | amf | qsv | cpu   (default: auto)
  *   --max 2160            Highest quality to produce (2160, 1440, 1080, 720 ...)
@@ -86,6 +88,8 @@ function parseArgs(argv) {
     else if (a === '--denoise') opts.denoise = true;
     else if (a === '--quick') opts.quick = true;
     else if (a === '--subtitles') opts.subtitlesJson = next();
+    else if (a === '--first-only') opts.firstOnly = true;
+    else if (a === '--keep-subs') opts.keepSubs = true;
     else if (a === '--progress-json') JSON_PROGRESS = true;
     else if (a === '-h' || a === '--help') { printHelp(); process.exit(0); }
     else if (a.startsWith('--')) die(`Unknown option ${a}`);
@@ -278,6 +282,9 @@ function writeMaster(outDir, file, renditions, fps) {
 /** Subtitles: the ones picked in the app (--subtitles), or --subs/--sub-track, or a matching file next to the movie. */
 async function prepareSubtitles(opts, info, outDir) {
   const subs = require('./subtitles');
+  if (opts.keepSubs) {
+    try { return subs.normalizeMetaSubs(JSON.parse(fs.readFileSync(path.join(outDir, 'meta.json'), 'utf8')).subtitles); } catch { /* none yet */ }
+  }
   let items = [];
   if (opts.subtitlesJson) {
     try { items = subs.sanitizeItems(JSON.parse(opts.subtitlesJson)); } catch { die('--subtitles must be JSON'); }
@@ -478,6 +485,7 @@ async function main() {
     const m = measureRendition(dir);
     done[job.family].push({ dir: dirName, label: job.label, width, height, codec: job.codec, avg: m.avg, peak: m.peak, bytes: m.bytes });
     publish(step.n === jobs.length);
+    if (opts.firstOnly && step.n < jobs.length) break; // the app queues the backups for later
   }
 
   /**
@@ -508,9 +516,11 @@ async function main() {
   }
 
   await subtitlesReady;
-  publish(true);
+  const complete = done.hevc.length + done.avc.length === jobs.length;
+  publish(complete);
   const totalGb = [...done.hevc, ...done.avc].reduce((s, r) => s + r.bytes, 0) / 1e9;
-  emit({ done: true, id, title, gb: totalGb });
+  emit({ done: true, id, title, gb: totalGb, complete });
+  if (!complete) { console.log(`\nWatchable version of "${title}" is ready. Backup versions come next.`); return; }
   console.log(`\nDone! "${title}" is ready in Movie Night (${totalGb.toFixed(1)} GB on disk).`);
   for (const r of [...done.hevc, ...done.avc]) {
     const name = r.label + (r.dir.includes('-hq_') ? ' HQ' : r.dir.includes('-lite_') ? ' Lite' : '');

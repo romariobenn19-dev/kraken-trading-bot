@@ -59,6 +59,7 @@ function avgStars(movieId) {
 const isFav = (id) => !!fstate.favorites[id] || avgStars(id) >= 4;
 
 function play(mv, fromStart) {
+  if (mv.pending) { send({ t: 'want', movieId: mv.id }); return; }
   if (fromStart) send({ t: 'load', movieId: mv.id, pos: 0 }); else send({ t: 'load', movieId: mv.id });
 }
 
@@ -69,23 +70,26 @@ function renderHome() {
   $('noMovies').classList.toggle('hidden', movies.length > 0);
   renderCountdown();
   renderHero();
-  const { series, movies: singles } = Series.group(movies);
+  const waiting = movies.filter((m) => m.pending || m.converting);
+  const readyMovies = movies.filter((m) => !m.pending);
+  const { series, movies: singles } = Series.group(readyMovies);
   const seriesByKey = new Map(series.map((s) => [s.key, s]));
   const out = [];
+  if (waiting.length) out.push(row('Just added ⏳', waiting.map((mv) => movieCard(mv))));
 
   const cont = movies.filter(inProgress).sort((a, b) => progressOf(b).at - progressOf(a).at);
   if (cont.length) out.push(row('Continue watching', cont.map((mv) => movieCard(mv, { progress: true }))));
 
   if (series.length) out.push(row('Series', series.map((s) => seriesCard(s))));
 
-  const fresh = [...movies].sort((a, b) => String(b.preparedAt).localeCompare(String(a.preparedAt))).slice(0, 12);
+  const fresh = [...readyMovies].sort((a, b) => String(b.preparedAt).localeCompare(String(a.preparedAt))).slice(0, 12);
   if (fresh.length) out.push(row('New', fresh.map((mv) => movieCard(mv))));
 
   const animeShows = series.filter((s) => s.episodes.some((e) => e.tmdb && e.tmdb.anime));
   const animeFilms = singles.filter((m) => m.tmdb && m.tmdb.anime);
   if (animeShows.length + animeFilms.length) out.push(row('Anime', [...animeShows.map(seriesCard), ...animeFilms.map((m) => movieCard(m))]));
 
-  const favs = movies.filter((m) => isFav(m.id));
+  const favs = readyMovies.filter((m) => isFav(m.id));
   const favShows = [...new Set(favs.map((m) => (Series.parse(m.title) || {}).key).filter(Boolean))].map((k) => seriesByKey.get(k)).filter(Boolean);
   const favFilms = favs.filter((m) => !Series.parse(m.title));
   if (favShows.length + favFilms.length) out.push(row('Favourites ♥', [...favShows.map(seriesCard), ...favFilms.map((m) => movieCard(m))]));
@@ -118,10 +122,12 @@ function movieCard(mv, { progress } = {}) {
     <div class="tile-meta"><b></b><span></span></div>`;
   if (img) b.querySelector('.tile-img').style.backgroundImage = `url("${img}")`;
   b.querySelector('b').textContent = title;
-  b.querySelector('.tile-meta span').textContent = mv.converting ? '⏳ Converting · watch now' : progress ? `${sub ? `${sub} · ` : ''}${timeLeft(mv)}` : sub;
+  b.querySelector('.tile-meta span').textContent = mv.pending
+    ? `${ep ? `${epLabel(ep)} · ` : ''}${mv.state === 'running' ? '⚙️ Getting ready…' : '⏳ Tap to watch now'}`
+    : mv.converting ? '⏳ Converting · watch now' : progress ? `${sub ? `${sub} · ` : ''}${timeLeft(mv)}` : sub;
   b.title = mv.tmdb && mv.tmdb.overview ? mv.tmdb.overview : mv.title;
   b.onclick = () => play(mv);
-  b.appendChild(tileActions(mv));
+  if (!mv.pending) b.appendChild(tileActions(mv));
   return b;
 }
 
@@ -177,7 +183,7 @@ function hash(s) { let h = 0; for (const ch of String(s)) h = (h * 31 + ch.charC
 function renderHero() {
   const hero = $('hero');
   const cont = movies.filter(inProgress).sort((a, b) => progressOf(b).at - progressOf(a).at);
-  const mv = cont[0] || [...movies].sort((a, b) => String(b.preparedAt).localeCompare(String(a.preparedAt)))[0];
+  const mv = cont[0] || [...movies].filter((m) => !m.pending).sort((a, b) => String(b.preparedAt).localeCompare(String(a.preparedAt)))[0];
   if (!mv) { hero.classList.add('hidden'); return; }
   hero.classList.remove('hidden');
   const ep = Series.parse(mv.title);
@@ -313,7 +319,7 @@ $('photoView').onclick = () => $('photoView').classList.add('hidden');
 
 // ---- Pick together --------------------------------------------------------------------------
 function candidates() {
-  const { series, movies: singles } = Series.group(movies);
+  const { series, movies: singles } = Series.group(movies.filter((m) => !m.pending));
   const items = [];
   for (const s of series) {
     const nextEp = s.episodes.find((e) => !isDone(e));

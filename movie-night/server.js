@@ -199,7 +199,10 @@ const server = http.createServer((req, res) => {
   }
   if (pathname === '/api/movies') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify(listMovies().map((m) => ({ ...m, tmdb: tmdb.cached(m.id) }))));
+    const ready = listMovies().map((m) => ({ ...m, tmdb: tmdb.cached(m.id) }));
+    // Movies added but not watchable yet (so they show up straight away on both screens).
+    const pending = host.pendingMovies().filter((p) => !ready.some((m) => m.id === p.id));
+    res.end(JSON.stringify([...pending, ...ready]));
     return;
   }
   if (pathname.startsWith('/library/')) {
@@ -416,6 +419,16 @@ function handle(ws, c, msg) {
     case 'react':
       broadcast({ t: 'react', from: c.name, emoji: String(msg.emoji || '').slice(0, 8) });
       break;
+    case 'want': {
+      // "Watch this now" on a movie that's still waiting to be converted.
+      const id = String(msg.movieId || '');
+      if (listMovies().some((m) => m.id === id)) { loadMovie(id); break; }
+      const r = host.prioritize(id);
+      if (!r) break;
+      room.want = { movieId: id, by: c.name, at: Date.now() };
+      broadcast({ t: 'wantAck', movieId: id, title: r.title, by: c.name });
+      break;
+    }
     default:
       features.handle(c, msg);
   }
@@ -674,7 +687,15 @@ const tmdb = createTmdb({ LIBRARY, config, listMovies, onUpdated: () => broadcas
 const host = createHost({
   ROOT, LIBRARY, config, saveConfig, links, restart, savePersonal, openPhotosFolder,
   httpsStatus: () => ({ ...tsHttps }), retryHttps: () => setupHttps(),
-  tmdb, onMovieReady: (title) => { features.onNewMovie(title); tmdb.refresh().catch(() => {}); },
+  tmdb, onMovieReady: (title, id) => {
+    features.onNewMovie(title);
+    tmdb.refresh().catch(() => {});
+    // Someone asked to watch this one: open it on every screen now that it's watchable.
+    if (room.want && room.want.movieId === id) {
+      room.want = null;
+      setTimeout(() => loadMovie(id, 0), 1500);
+    }
+  },
   sendToHosts(msg) {
     const data = JSON.stringify(msg);
     for (const [ws, c] of clients) if (c.isHost && ws.readyState === ws.OPEN) ws.send(data);

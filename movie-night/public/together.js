@@ -14,6 +14,9 @@ function onFeatureMessage(m) {
     case 'rateMe': openRateCard(m.entryId, m.title, m.movieId); break;
     case 'snap': flash(); toast(`📸 ${m.by === myName() ? 'You' : m.by} saved a moment to your diary`); break;
     case 'wheel': if (!meta) { showTab('pick'); showWheel(m); } break;
+    case 'wantAck': toast(m.by === myName()
+      ? `⏳ Getting "${m.title}" ready. It'll open on both screens in about a minute.`
+      : `⏳ ${m.by} picked "${m.title}". It'll open on both screens in about a minute.`, 7000); break;
     default:
   }
 }

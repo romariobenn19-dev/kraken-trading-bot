@@ -83,6 +83,8 @@ Save movies into **Videos\Movie Night** on the laptop. That's it: each one is ad
 
 - **Subtitles:** save the subtitle file in the same folder (or in the movie's own subfolder). It's matched automatically, even if the names differ: `Frieren - 14.mkv` + `[Group] Frieren - 14 [English].srt`, or a film's folder with `english.srt` inside. Several languages work (`Film.en.srt`, `Film.el.srt`).
 - **Subtitles you save later** are added to the movie automatically. No reconverting.
+- **Add several at once:** everything you drop in appears straight away on both screens under **Just added ⏳**. Tap any of them (either of you) and it jumps the queue: it opens on both screens about a minute later, even while another one is converting. Switch between them whenever you like.
+- Order: the watchable version of every movie is made first, then the backup versions for Wi-Fi dips.
 - Half-finished downloads (`.part`, `.crdownload`) are ignored until they're done, and "sample" clips are skipped.
 - Your original files are never moved or deleted (Movie Night needs them for adding built-in subtitles later).
 - On the laptop, the home screen shows the folder with **Open folder** and **Change…** buttons.

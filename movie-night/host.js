@@ -103,14 +103,21 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
   const version = () => JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 
   // ---- Conversion queue ----------------------------------------------------------
+  // Each movie is converted in two stages:
+  //   'watch'   - the version you watch (playable within about a minute)
+  //   'backups' - the lighter versions for Wi-Fi dips
+  // All movies' 'watch' stages run before any 'backups', so everything you add becomes
+  // watchable quickly. A movie someone taps "watch now" on jumps the queue and may run
+  // alongside the current conversion.
   const jobs = [];
-  let running = null;
+  const runningJobs = new Set();
+  const MAX_PARALLEL = 2;
   let nextJobId = 1;
   let lastPush = 0;
 
   function publicJobs() {
-    return jobs.map(({ id, title, file, status, progress, error, startedAt, finishedAt, ready, source, auto }) =>
-      ({ id, title, file: path.basename(file), status, progress, error, startedAt, finishedAt, ready: !!ready, source: source || null, auto: !!auto }));
+    return jobs.map(({ id, title, file, status, progress, error, startedAt, finishedAt, ready, source, auto, phase, priority, complete }) =>
+      ({ id, title, file: path.basename(file), status, progress, error, startedAt, finishedAt, ready: !!ready, source: source || null, auto: !!auto, phase, priority: !!priority, complete: !!complete }));
   }
   function pushJobs(force) {
     const now = Date.now();
@@ -119,35 +126,51 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     sendToHosts({ t: 'jobs', jobs: publicJobs() });
   }
 
-  function enqueue({ file, title, denoise, skipAvc, quick, subtitles: subs, auto }) {
+  function enqueue({ file, title, denoise, skipAvc, quick, subtitles: subs, auto, phase = 'watch' }) {
     const job = {
-      id: nextJobId++, file, title, denoise: !!denoise, skipAvc: !!skipAvc, quick: !!quick, subtitles: subs, auto: !!auto,
+      id: nextJobId++, file, title, movieId: slugify(title), denoise: !!denoise, skipAvc: !!skipAvc, quick: !!quick,
+      subtitles: subs, auto: !!auto, phase, priority: false,
       status: 'queued', progress: null, error: null, log: '', startedAt: null, finishedAt: null,
     };
     jobs.push(job);
     // Keep the list short: drop old finished jobs.
-    while (jobs.length > 12) {
+    while (jobs.length > 30) {
       const i = jobs.findIndex((j) => ['done', 'failed', 'cancelled'].includes(j.status));
       if (i < 0) break;
       jobs.splice(i, 1);
     }
     runNext();
     pushJobs(true);
+    if (phase === 'watch') libraryChanged(); // it appears on both screens straight away
     return job;
   }
 
+  function nextQueued() {
+    const q = jobs.filter((j) => j.status === 'queued');
+    return q.find((j) => j.priority) || q.find((j) => j.phase === 'watch') || q[0];
+  }
+
   function runNext() {
-    if (running) return;
-    const job = jobs.find((j) => j.status === 'queued');
-    if (!job) return;
-    running = job;
+    for (;;) {
+      const job = nextQueued();
+      if (!job) return;
+      // One conversion at a time, plus one extra for a "watch this now" request.
+      if (runningJobs.size >= (job.priority ? MAX_PARALLEL : 1)) return;
+      start(job);
+    }
+  }
+
+  function start(job) {
+    runningJobs.add(job);
     job.status = 'running';
     job.startedAt = Date.now();
     const args = [path.join(ROOT, 'prepare.js'), job.file, '--title', job.title, '--progress-json'];
     if (job.denoise) args.push('--denoise');
     if (job.skipAvc) args.push('--no-avc');
     if (job.quick) args.push('--quick');
-    if (job.subtitles) args.push('--subtitles', JSON.stringify(job.subtitles));
+    if (job.phase === 'watch') args.push('--first-only');
+    if (job.phase === 'backups') args.push('--keep-subs');
+    if (job.subtitles && job.phase === 'watch') args.push('--subtitles', JSON.stringify(job.subtitles));
     const p = spawn(process.execPath, args, {
       cwd: ROOT, windowsHide: true,
       env: { ...process.env, LIBRARY, FFMPEG, FFPROBE },
@@ -163,14 +186,14 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
         if (line.startsWith('@@')) {
           try {
             const ev = JSON.parse(line.slice(2));
-            if (ev.done) job.resultId = ev.id;
+            if (ev.done) { job.resultId = ev.id; job.complete = !!ev.complete; }
             else if (ev.source) job.source = ev.source;
             else if (ev.ready) {
-              // A version is finished: the movie is watchable now (backups may still be coming).
+              // The movie is watchable now (it may still be converting ahead of you).
               const first = !job.ready;
               job.ready = true;
               libraryChanged();
-              if (first && onMovieReady) onMovieReady(job.title);
+              if (first && job.phase === 'watch' && onMovieReady) onMovieReady(job.title, ev.id || job.movieId);
               pushJobs(first);
             } else job.progress = ev;
             pushJobs();
@@ -191,11 +214,29 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
         const m = job.log.match(/Error: ([\s\S]*)$/);
         job.error = (m ? m[1] : job.log).trim().split('\n').slice(0, 6).join('\n').slice(0, 600) || `Stopped (code ${code})`;
       }
-      running = null;
+      runningJobs.delete(job);
+      // Watchable version done: queue its backups (after every other movie's watchable version).
+      if (job.status === 'done' && job.phase === 'watch' && !job.complete) {
+        enqueue({ file: job.file, title: job.title, denoise: job.denoise, skipAvc: job.skipAvc, quick: job.quick, auto: job.auto, phase: 'backups' });
+      }
       pushJobs(true);
-      if (job.status === 'done') libraryChanged();
+      libraryChanged();
       runNext();
     });
+  }
+
+  /** Someone tapped a movie that isn't ready yet: start it now. */
+  function prioritize(movieId) {
+    const job = jobs.find((j) => j.movieId === movieId && j.phase === 'watch' && (j.status === 'queued' || j.status === 'running'));
+    if (!job) return null;
+    if (job.status === 'queued') { job.priority = true; runNext(); pushJobs(true); libraryChanged(); }
+    return { title: job.title, status: job.status };
+  }
+
+  /** Movies added but not watchable yet, so both screens can show them straight away. */
+  function pendingMovies() {
+    return jobs.filter((j) => j.phase === 'watch' && (j.status === 'queued' || j.status === 'running') && !j.ready)
+      .map((j) => ({ id: j.movieId, title: j.title, pending: true, state: j.status, preparedAt: new Date(j.startedAt || Date.now()).toISOString() }));
   }
 
   function cancel(id) {
@@ -207,6 +248,7 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
       job.proc.kill();
     }
     pushJobs(true);
+    libraryChanged();
     return true;
   }
 
@@ -281,7 +323,7 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
   }
 
   async function applyUpdate() {
-    if (running) throw new Error('A movie is still converting. Try again when it has finished.');
+    if (runningJobs.size) throw new Error('A movie is still converting. Try again when it has finished.');
     const info = await checkUpdate();
     if (!info.newer) return { ...info, updated: false };
     // Download everything first; only write if every file arrived.
@@ -393,7 +435,7 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
       if (pathname === '/api/host/delete') {
         const id = String(body.id || '');
         if (!/^[a-z0-9-]+$/.test(id)) return json(res, 400, { error: 'Bad movie id' });
-        if (running && slugify(running.title) === id) return json(res, 409, { error: 'That movie is still converting.' });
+        if ([...runningJobs].some((j) => j.movieId === id)) return json(res, 409, { error: 'That movie is still converting.' });
         fs.rmSync(path.join(LIBRARY, id), { recursive: true, force: true });
         onMovieDeleted(id);
         libraryChanged();
@@ -487,7 +529,7 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     return fixed;
   }
 
-  return { handle, onStatus, publicJobs, repairMissing, isBusy: () => !!running, ffmpeg: FFMPEG };
+  return { handle, onStatus, publicJobs, repairMissing, prioritize, pendingMovies, isBusy: () => runningJobs.size > 0, ffmpeg: FFMPEG };
 };
 
 module.exports.cleanTitle = cleanTitle;

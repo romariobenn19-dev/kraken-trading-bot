@@ -890,14 +890,14 @@ function renderJobs(jobs) {
     el.className = `job ${j.status}`;
     const p = j.progress;
     let detail = '', pct = 0;
-    if (j.status === 'queued') detail = 'Waiting for the movie before it to finish';
+    if (j.status === 'queued') detail = j.phase === 'backups' ? 'Backups: waiting until every movie is watchable' : j.priority ? 'Starting next (someone wants to watch it)' : 'Waiting its turn';
     else if (j.status === 'running') {
       if (p && p.steps) {
         pct = ((p.step - 1) + p.pct / 100) / p.steps * 100;
         detail = (j.ready ? (p.step === 1 ? 'Watchable now ✓ · converting ahead of you: ' : 'Ready to watch ✓ · making backups: ') : 'Making the version you\'ll watch: ') +
           `${p.label} (${p.step} of ${p.steps}) · ${p.pct}%` + (p.eta ? ` · this part ~${fmt(p.eta)} left` : '');
       } else detail = 'Starting…';
-    } else if (j.status === 'done') { detail = 'Ready to watch ✓'; pct = 100; }
+    } else if (j.status === 'done') { detail = j.phase === 'watch' && !j.complete ? 'Watchable ✓ · backups queued' : 'Ready to watch ✓'; pct = 100; }
     else if (j.status === 'cancelled') detail = 'Stopped';
     else if (j.status === 'failed') detail = 'Something went wrong';
     el.innerHTML = `<div class="job-top"><b></b><span class="muted small"></span><button class="ghost small"></button></div>
@@ -907,7 +907,7 @@ function renderJobs(jobs) {
       const srcP = Math.min(j.source.height, Math.round(j.source.width * 9 / 16));
       detail += ` · original file: ${j.source.width}×${j.source.height}` + (srcP < 700 ? ' (that\'s as sharp as this file goes)' : '');
     }
-    el.querySelector('b').textContent = j.auto ? `📂 ${j.title}` : j.title;
+    el.querySelector('b').textContent = `${j.auto ? '📂 ' : ''}${j.phase === 'backups' ? 'Backups · ' : ''}${j.title}`;
     el.querySelector('.muted').textContent = detail;
     const btn = el.querySelector('button');
     if (j.status === 'running' || j.status === 'queued') {
