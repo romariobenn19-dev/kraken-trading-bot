@@ -126,5 +126,54 @@ module.exports = function createTmdb({ LIBRARY, config, listMovies, onUpdated })
     } catch { return null; }
   }
 
-  return { refresh, cached, hasKey: () => !!key() };
+  /**
+   * "Because you loved X": movies you don't have yet, from TMDB recommendations for the
+   * ones you rated highest (or what's trending, if there's nothing to go on yet).
+   */
+  let discoverCache = null;
+  async function discover(seeds, lib, wishlist) {
+    if (!key()) return { items: [], reason: 'no-key' };
+    const seedInfo = seeds.map((m) => ({ m, t: cached(m.id) })).filter((x) => x.t && x.t.tmdbId);
+    const cacheKey = seedInfo.slice(0, 4).map((x) => x.t.tmdbId).join(',');
+    if (discoverCache && discoverCache.key === cacheKey && Date.now() - discoverCache.at < 6 * 3600000) return discoverCache.value;
+    const norm = (t) => String(t).toLowerCase().replace(/\(\d{4}\)/g, '').replace(/[^a-z0-9]+/g, '');
+    const have = new Set(lib.map((m) => cached(m.id)).filter(Boolean).map((t) => `${t.kind === 'episode' ? 'tv' : 'movie'}:${t.tmdbId}`));
+    const haveTitles = new Set([...lib.map((m) => norm((cached(m.id) || {}).show || (cached(m.id) || {}).title || m.title)), ...(wishlist || []).map((w) => norm(w.title))]);
+    const lists = [];
+    const seen = new Set();
+    const usedShows = new Set();
+    for (const { m, t } of seedInfo) {
+      if (lists.length >= 4) break;
+      const kind = t.kind === 'episode' ? 'tv' : 'movie';
+      if (kind === 'tv' && usedShows.has(t.tmdbId)) continue;
+      usedShows.add(t.tmdbId);
+      try {
+        const r = await get(`/${kind}/${t.tmdbId}/recommendations`);
+        lists.push({ because: kind === 'tv' ? (t.show || m.title) : (t.title || m.title), kind, results: r.results || [] });
+      } catch (e) { if (e.auth) return { items: [], reason: 'bad-key' }; }
+    }
+    if (!lists.some((l) => l.results.length)) {
+      try { lists.push({ because: null, kind: 'movie', results: (await get('/trending/movie/week')).results || [] }); } catch (e) { return { items: [], reason: e.auth ? 'bad-key' : 'offline' }; }
+    }
+    const g = await genreNames().catch(() => new Map());
+    const items = [];
+    for (let i = 0; items.length < 18 && i < 20; i++) {
+      for (const l of lists) {
+        const r = l.results[i];
+        if (!r) continue;
+        const kind = r.media_type === 'tv' || l.kind === 'tv' ? 'tv' : 'movie';
+        const title = r.title || r.name;
+        const k = `${kind}:${r.id}`;
+        if (!title || !r.poster_path || seen.has(k) || have.has(k) || haveTitles.has(norm(title))) continue;
+        seen.add(k);
+        items.push({ tmdbId: r.id, kind, title, year: (r.release_date || r.first_air_date || '').slice(0, 4), overview: r.overview || '',
+          rating: r.vote_average || null, poster: `${IMG}/w342${r.poster_path}`, genres: (r.genre_ids || []).map((x) => g.get(x)).filter(Boolean), because: l.because });
+      }
+    }
+    const value = { items, reason: items.length ? null : 'none' };
+    discoverCache = { key: cacheKey, at: Date.now(), value };
+    return value;
+  }
+
+  return { refresh, cached, discover, hasKey: () => !!key() };
 };

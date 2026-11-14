@@ -691,6 +691,7 @@ function checkNewBadges() {
   store.set('mn_badges', earned.join(','));
   if (seenRaw === null || seenRaw === undefined) return; // first time: no fanfare for old history
   const fresh = earned.filter((id) => !seen.has(id)).map((id) => BADGES.find((b) => b.id === id));
+  for (const b of fresh) send({ t: 'badgeEarned', id: b.id, name: b.name, icon: b.icon });
   if (fresh.length === 1) celebrate(`${fresh[0].icon} New badge: ${fresh[0].name}!`);
   else if (fresh.length > 1) celebrate(`🏅 ${fresh.length} new badges! See them in Our diary`);
 }
@@ -946,7 +947,7 @@ function onFunMessage(m) {
       else if (m.kind === 'close') closeDoodle();
       break;
     case 'predicted': if (m.by !== myName()) toast(`🔮 ${m.by} sealed a secret prediction`); break;
-    default:
+    default: if (typeof onHubMessage === 'function') onHubMessage(m);
   }
 }
 
@@ -1004,7 +1005,7 @@ openRateCard = async function (entryId, title, movieId) {
   baseOpenRateCard(entryId, title, movieId);
   if ($('rateCard').classList.contains('hidden')) return;
   $('rateArt').innerHTML = dressed(genresOf(movieId), 'love');
-  try { const r = await fetch('/api/f/state', { cache: 'no-store' }); if (r.ok) fstate = await r.json(); } catch { /* offline */ }
+  try { const r = await fetch(`/api/f/state?me=${encodeURIComponent(myName())}`, { cache: 'no-store' }); if (r.ok) fstate = await r.json(); } catch { /* offline */ }
   const card = $('rateCard').querySelector('.rate-card');
   card.querySelectorAll('.rate-extra').forEach((x) => x.remove());
   card.insertAdjacentHTML('beforeend', `<div class="rate-extra">${predictionsHtml(movieId)}

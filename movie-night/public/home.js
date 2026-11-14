@@ -9,7 +9,7 @@ const myName = () => store.get('mn_name') || '';
 
 async function loadFeatures() {
   try {
-    const r = await fetch('/api/f/state', { cache: 'no-store' });
+    const r = await fetch(`/api/f/state?me=${encodeURIComponent(myName())}`, { cache: 'no-store' });
     if (r.ok) fstate = await r.json();
   } catch { /* offline */ }
   renderHome();
@@ -181,10 +181,10 @@ function tileActions(mv) {
 function hash(s) { let h = 0; for (const ch of String(s)) h = (h * 31 + ch.charCodeAt(0)) | 0; return h; }
 
 // ---- Hero banner ----------------------------------------------------------------------------
-function renderHero() {
+function renderHero(forced, kicker) {
   const hero = $('hero');
   const cont = movies.filter(inProgress).sort((a, b) => progressOf(b).at - progressOf(a).at);
-  const mv = cont[0] || [...movies].filter((m) => !m.pending).sort((a, b) => String(b.preparedAt).localeCompare(String(a.preparedAt)))[0];
+  const mv = forced || cont[0] || [...movies].filter((m) => !m.pending).sort((a, b) => String(b.preparedAt).localeCompare(String(a.preparedAt)))[0];
   if (!mv) { hero.classList.add('hidden'); return; }
   hero.classList.remove('hidden');
   const ep = Series.parse(mv.title);
@@ -195,7 +195,7 @@ function renderHero() {
     <div class="hero-img">${img ? '' : Art.scene('romance')}</div>
     <div class="hero-shade"></div>
     <div class="hero-text">
-      <div class="hero-kicker">${resuming ? 'Continue watching' : 'Newest'}</div>
+      <div class="hero-kicker">${escapeHtml(kicker || (resuming ? 'Continue watching' : 'Newest'))}</div>
       <h2 class="hero-title"></h2>
       <div class="hero-sub"></div>
       ${overview ? '<p class="hero-overview"></p>' : ''}

@@ -182,6 +182,7 @@ function join() {
   connect();
   refreshMovies();
   loadPersonal();
+  if (typeof loadFeatures === 'function') loadFeatures(); // your own answers & puzzles need your name
 }
 
 // ---- Networking ---------------------------------------------------------------

@@ -774,7 +774,7 @@ function restart() {
 }
 
 const features = createFeatures({
-  ROOT, LIBRARY, config, saveConfig, broadcast, clients, room, listMovies, loadMovie, startPlaying, publicLinks: () => links(),
+  ROOT, LIBRARY, discover: (...a) => tmdb.discover(...a), config, saveConfig, broadcast, clients, room, listMovies, loadMovie, startPlaying, publicLinks: () => links(),
 });
 const tmdb = createTmdb({ LIBRARY, config, listMovies, onUpdated: () => broadcast({ t: 'library' }) });
 

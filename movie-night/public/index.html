@@ -46,6 +46,7 @@
 
     <div id="tab-home" class="tab-panel">
       <div id="seasonBanner" class="season-banner hidden"></div>
+      <div id="dash" class="dash"></div>
       <div id="countdownCard" class="countdown-card"></div>
       <div id="hero" class="hero hidden"></div>
 
@@ -68,13 +69,19 @@
       <div id="httpsNote" class="https-note hidden"></div>
       <div id="jobs" class="jobs"></div>
 
-      <div id="moods" class="moods"></div>
-      <div id="rows" class="rows"></div>
-      <section id="wishlist" class="wishlist"></section>
-      <div id="movies" class="hidden"></div>
-      <div id="noMovies" class="empty hidden">
-        <div id="emptyArt" class="empty-art"></div>
-        <p class="muted">No movies yet. Add one on the laptop and it'll appear here for both of you.</p>
+      <div class="home-grid">
+        <div class="home-main">
+          <div id="moods" class="moods"></div>
+          <div id="rows" class="rows"></div>
+          <div id="movies" class="hidden"></div>
+          <div id="noMovies" class="empty hidden">
+            <div id="emptyArt" class="empty-art"></div>
+            <p class="muted">No movies yet. Add one on the laptop and it'll appear here for both of you.</p>
+          </div>
+          <section id="discover" class="discover"></section>
+          <section id="wishlist" class="wishlist"></section>
+        </div>
+        <aside id="homeSide" class="home-side" aria-label="Things to do together"></aside>
       </div>
 
       <h3 class="section-title pad">Our moments</h3>
@@ -353,5 +360,6 @@
   <script src="/home.js"></script>
   <script src="/together.js"></script>
   <script src="/fun.js"></script>
+  <script src="/hub.js"></script>
 </body>
 </html>

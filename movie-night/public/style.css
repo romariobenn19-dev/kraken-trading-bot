@@ -578,7 +578,7 @@ body:has(#player:not(.hidden)) .season-fx { display: none; }
 .season-fx span { position: absolute; top: -40px; opacity: .75; animation: fall linear infinite; }
 @keyframes fall { to { transform: translateY(110vh) rotate(200deg); } }
 body[data-season="halloween"] .season-fx span { opacity: .55; }
-.season-banner { margin: 0 0 14px; padding: 12px 18px; border-radius: var(--radius); background: linear-gradient(90deg, #fff4ea, #fde4e1);
+.season-banner { margin: 0 20px 14px; padding: 12px 18px; border-radius: var(--radius); background: linear-gradient(90deg, #fff4ea, #fde4e1);
   border: 1px solid var(--line); font-weight: 700; color: var(--accent); box-shadow: var(--shadow); }
 body[data-season="christmas"] .season-banner { background: linear-gradient(90deg, #fff7f0, #e8f3ea); color: #a8323e; }
 body[data-season="halloween"] .season-banner { background: linear-gradient(90deg, #fff3e2, #efe2f7); color: #7a4a9e; }
@@ -754,3 +754,100 @@ a.btn-link { text-decoration: none; color: #fff; background: var(--accent); bord
   .lips-mark, .burst, .celebrate, .w-slide, .surprise-card, .badge.on .badge-icon { animation-duration: .01s; }
 }
 #stage:has(.doodle-canvas:not(.hidden)) .intermission:not(.snack) { display: none; }
+
+/* ===================== Fuller home ===================== */
+/* Together dashboard */
+.dash { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 0 20px 14px; }
+.dash-card { display: flex; align-items: center; gap: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 12px 14px;
+  box-shadow: 0 4px 14px rgba(110, 76, 50, .07); text-align: left; color: var(--text); font: inherit; min-width: 0; }
+.dash-card.link { cursor: pointer; }
+.dash-card.link:hover { border-color: var(--accent-soft); }
+.dash-card > div { display: grid; min-width: 0; }
+.dash-card b { font: 700 18px Georgia, serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dash-icon { font-size: 28px; flex: none; }
+.dash-card.clocks { gap: 16px; flex-wrap: wrap; }
+.clock { display: flex; align-items: center; gap: 8px; }
+.clock > div { display: grid; }
+.clock .avatar { width: 32px; height: 32px; }
+.mem-img { width: 40px; height: 58px; border-radius: 8px; background: center/cover; flex: none; box-shadow: 0 3px 8px rgba(0,0,0,.2); }
+
+/* Hero carousel */
+.hero.fade-in .hero-img, .hero.fade-in .hero-text { animation: heroFade .7s ease-out; }
+@keyframes heroFade { from { opacity: 0; } to { opacity: 1; } }
+.hero-dots { position: absolute; right: 22px; bottom: 20px; display: flex; gap: 8px; z-index: 2; }
+.hero-dots button { width: 10px; height: 10px; border-radius: 50%; border: 0; padding: 0; background: rgba(255, 250, 242, .45); cursor: pointer; }
+.hero-dots button.on { background: #fffaf2; width: 26px; border-radius: 6px; }
+
+/* Main column + sidebar */
+.home-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.home-main { min-width: 0; }
+.home-side { display: grid; gap: 14px; align-content: start; margin: 8px 20px 0; }
+@media (min-width: 1100px) {
+  .home-grid { grid-template-columns: minmax(0, 1fr) 370px; }
+  .home-side { margin: 0 20px 0 0; }
+}
+.row-block.few .row-scroll { grid-auto-columns: clamp(240px, 24vw, 330px); }
+.row-scroll { scroll-padding-inline: 20px; }
+
+/* Discover */
+.discover .row-title i { font-style: italic; color: var(--accent); }
+.row-scroll.posters { grid-auto-columns: clamp(130px, 14vw, 170px); }
+.poster-tile { display: grid; gap: 4px; text-align: left; background: none; border: 0; padding: 0; cursor: pointer; color: var(--text); font: inherit; }
+.poster-img { position: relative; aspect-ratio: 2 / 3; border-radius: 14px; background: var(--panel-2) center/cover; box-shadow: var(--shadow); transition: transform .2s; }
+.poster-tile:hover .poster-img { transform: translateY(-3px); }
+.poster-tile b { font-size: 14px; line-height: 1.25; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.discover-card { display: flex; gap: 18px; padding: 18px; width: min(640px, 100%); }
+.dc-poster { width: 150px; aspect-ratio: 2 / 3; border-radius: 14px; background: center/cover; flex: none; box-shadow: var(--shadow); }
+.dc-body { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.dc-body h2 { margin: 0; font: 700 26px Georgia, serif; }
+.dc-body p { margin: 0; }
+.dc-body .row { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+@media (max-width: 520px) { .discover-card { flex-direction: column; align-items: center; } .dc-poster { width: 120px; } }
+
+/* Sidebar cards */
+.side-card { background: var(--panel); border: 1px solid var(--line); border-radius: 20px; padding: 14px 16px; box-shadow: 0 4px 14px rgba(110, 76, 50, .07); display: grid; gap: 8px; }
+.side-kicker { font: 700 12px system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+.side-card h3 { margin: 0; font: 700 19px/1.3 Georgia, serif; }
+.side-form { display: grid; gap: 8px; }
+.side-form.inline { grid-template-columns: 1fr auto; }
+.side-form textarea, .side-form input { width: 100%; border: 1px solid var(--line); border-radius: 12px; padding: 9px 12px; background: #fff; resize: vertical; min-width: 0; }
+.side-form .primary.small, .side-card .primary.small { padding: 8px 16px; }
+.side-card .row { display: flex; align-items: center; gap: 8px; }
+.side-card details summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+.answer { display: flex; gap: 10px; align-items: flex-start; }
+.answer .avatar { width: 34px; height: 34px; flex: none; }
+.answer p { margin: 2px 0 0; }
+.answer.small { font-size: 14px; margin-top: 4px; }
+.answer.small .avatar { width: 24px; height: 24px; }
+.hist { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.heart-av { display: grid; place-items: center; background: var(--panel-2); border-radius: 50%; font-size: 16px; }
+.emoji-big { font-size: 44px; text-align: center; letter-spacing: 6px; line-height: 1.2; padding: 4px 0; }
+.emoji-answer { margin: 0; text-align: center; }
+.emoji-foot { flex-wrap: wrap; }
+.link-btn { background: none; border: 0; color: var(--muted); text-decoration: underline; cursor: pointer; justify-self: start; padding: 0; font-size: 13px; }
+.shake { animation: shake .4s; border-color: var(--bad) !important; }
+@keyframes shake { 20%, 60% { transform: translateX(-6px); } 40%, 80% { transform: translateX(6px); } }
+.tot-pair { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; }
+.tot-btn { border: 2px solid var(--line); background: #fff; border-radius: 16px; padding: 14px 8px; cursor: pointer; font-weight: 700; color: var(--text); min-height: 64px; }
+.tot-btn:hover { border-color: var(--accent-soft); background: #fff6f3; }
+.tot-or { font: italic 14px Georgia, serif; color: var(--muted); }
+.tot-result { margin: 0; padding: 8px 10px; background: var(--panel-2); border-radius: 12px; font-size: 14px; }
+.tot-result.match { background: #fde4e1; }
+.feed { display: grid; gap: 10px; max-height: 340px; overflow-y: auto; }
+.feed-item { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; }
+.feed-item .avatar { width: 30px; height: 30px; flex: none; }
+.feed-item > div { display: grid; flex: 1; min-width: 0; }
+.feed-item img { width: 52px; height: 34px; object-fit: cover; border-radius: 6px; flex: none; }
+.profile-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.profile { background: var(--bg); border-radius: 14px; padding: 10px; display: grid; gap: 4px; min-width: 0; }
+.profile-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.profile-head .avatar { width: 36px; height: 36px; }
+.profile-head b { font: 700 16px Georgia, serif; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stat-row { display: flex; justify-content: space-between; gap: 6px; font-size: 12.5px; }
+.stat-row span { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat-row b { white-space: nowrap; }
+@media (max-width: 640px) {
+  .dash { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 72%; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 4px; scrollbar-width: none; }
+  .dash::-webkit-scrollbar { display: none; }
+  .dash-card { scroll-snap-align: start; }
+}

@@ -37,6 +37,17 @@ If Windows says *"Windows protected your PC"*, click **More info**, then **Run a
 
 ## What's in the app
 
+**Home dashboard:** across the top, days together, your time and her time side by side, your weekly streak, badges, and a memory ("A year ago today you watched…"). The banner rotates through what you're watching, the newest movie, your favourite and ones you haven't seen.
+
+**Things to do together** (beside the movies on a laptop, below them on a phone):
+- **💭 Today's question:** a new couple/movie question every day. Your answer stays sealed until you've both answered; past questions are kept.
+- **🧩 Emoji movie guess:** a daily puzzle (🦁👑🌅 = The Lion King), plus ones you make for each other ("Make one for Maria"). Small typos still count. Scores are kept.
+- **⚖️ This or that:** quick taste battles (Popcorn or nachos? Rom-com or horror?) and how often you agree.
+- **💌 Lately:** a feed of love notes, ratings, wishes, puzzles, badges and games.
+- **👫 Us:** a profile for each of you: average stars, favourite genre, go-to reaction, wins.
+
+**✨ Discover** (needs the TMDB key): "Because you loved…" suggestions of movies you don't have yet. Tap one to add it to your wishlist.
+
 **Home:** a big banner for what you're watching, then rows: *Continue watching* (with how much is left), *Series*, *New*, *Anime*, *Favourites ♥* and *Movies*. Tap ♡ on any movie to make it a favourite.
 
 **Real posters and descriptions (optional):** in 🎀 Personalize on the laptop, paste a free TMDB key (themoviedb.org → Settings → API). Movies and episodes get real posters, backdrops, descriptions, ratings and genres.
