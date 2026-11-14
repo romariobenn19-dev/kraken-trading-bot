@@ -227,8 +227,67 @@
     return `<svg class="reaction-face" viewBox="0 0 120 112" role="img" aria-label="${r.label}">${r.svg()}</svg>`;
   }
 
-  function couple(face = 'smile') {
-    return `<svg class="couple" viewBox="0 0 300 180" role="img" aria-label="Us">${place(him({ face }), 30, 18, 1)}${place(her({ face: face === 'smile' ? 'wink' : face }), 140, 20, 1)}${place(dog({ face: 'smile' }), 108, 100, 0.72, 'bob')}</svg>`;
+  // ---- Dress-up: things the three of us wear for different movies & seasons -----------
+  // Drawn in the couple() picture's coordinates (300 x 180).
+  // (inline transform-box: the page's CSS otherwise rotates every shape around its own centre)
+  const santaHat = (x, y, w, tilt = 12) => `<g transform="rotate(${tilt} ${x + w / 2} ${y})" style="transform-box:view-box;transform-origin:0 0">
+    <path d="M${x} ${y} Q${x + w * 0.45} ${y - w * 0.9} ${x + w * 1.05} ${y - w * 0.55} Q${x + w * 0.8} ${y - w * 0.3} ${x + w} ${y} Z" fill="#d6363f"/>
+    <rect x="${x - 4}" y="${y - 6}" width="${w + 8}" height="13" rx="6.5" fill="#fffaf1"/><circle cx="${x + w * 1.05}" cy="${y - w * 0.55}" r="7" fill="#fffaf1"/></g>`;
+  const partyHat = (x, y, w, fill) => `<g><path d="M${x} ${y} L${x + w / 2} ${y - w * 1.1} L${x + w} ${y} Z" fill="${fill}"/>
+    <path d="M${x + w * 0.2} ${y - w * 0.25} L${x + w * 0.8} ${y - w * 0.25} M${x + w * 0.32} ${y - w * 0.55} L${x + w * 0.68} ${y - w * 0.55}" stroke="#fff" stroke-width="3"/>
+    <circle cx="${x + w / 2}" cy="${y - w * 1.1}" r="5" fill="#f3d27a"/></g>`;
+  const glasses3d = (x1, x2, y) => `<g>
+    <rect x="${x1 - 14}" y="${y - 9}" width="27" height="18" rx="4" fill="#e5484d" opacity=".85" stroke="#2b1d17" stroke-width="3"/>
+    <rect x="${x2 - 13}" y="${y - 9}" width="27" height="18" rx="4" fill="#3fb6e5" opacity=".85" stroke="#2b1d17" stroke-width="3"/>
+    <path d="M${x1 + 13} ${y - 2} L${x2 - 13} ${y - 2}" stroke="#2b1d17" stroke-width="3"/></g>`;
+  const ACCESSORIES = {
+    glasses3d: () => glasses3d(75, 105, 68) + glasses3d(185, 215, 75),
+    santa: () => santaHat(56, 36, 66, -8) + santaHat(168, 38, 62, 10) + santaHat(142, 131, 34, 8),
+    party: () => partyHat(70, 34, 40, '#7fb2d8') + partyHat(184, 34, 36, '#e7a9a0') + partyHat(148, 131, 22, '#f3d27a')
+      + [[30, 30, '#e5484d'], [262, 40, '#5aa77c'], [40, 110, '#f3d27a'], [270, 120, '#7fb2d8'], [150, 20, '#e7a9a0']]
+        .map(([x, y, c]) => `<rect class="twinkle" x="${x}" y="${y}" width="7" height="7" rx="1.5" fill="${c}" transform="rotate(25 ${x} ${y})"/>`).join(''),
+    witch: () => `<g><path d="M162 44 L238 44 L222 34 L206 -6 L190 30 Z" fill="#2b1d17"/><ellipse cx="200" cy="44" rx="48" ry="8" fill="#2b1d17"/><rect x="186" y="32" width="30" height="6" fill="#8e5bd1"/></g>
+      <g transform="translate(18 132)"><ellipse cx="22" cy="22" rx="24" ry="20" fill="#f08a2c"/><path d="M22 2 q2 -8 8 -9" stroke="#5aa77c" stroke-width="4" fill="none"/>
+      <path d="M10 18 l5 -6 l5 6 Z M26 18 l5 -6 l5 6 Z M10 28 q12 8 24 0 l-4 5 l-4 -4 l-4 4 l-4 -4 l-4 4 Z" fill="#2b1d17"/></g>
+      <path class="float" d="M250 22 q8 -8 14 0 q6 -8 14 0 q-7 -2 -14 6 q-7 -8 -14 -6 Z" fill="#2b1d17"/>`,
+    blanket: () => `<g class="shiver"><path d="M6 182 L10 118 Q60 98 150 104 Q240 98 294 116 L296 182 Z" fill="#d9c4a5"/>
+      <path d="M14 126 Q80 108 150 114 Q220 108 290 126" stroke="#c4ab86" stroke-width="3" fill="none"/>
+      <path d="M40 150 l14 14 M90 140 l14 14 M150 146 l14 14 M210 140 l14 14 M250 152 l14 14" stroke="#e7a9a0" stroke-width="5" stroke-linecap="round"/></g>`,
+    tissues: () => `<g transform="translate(236 136)"><rect x="0" y="12" width="46" height="30" rx="5" fill="#f6eedf" stroke="#c4ab86" stroke-width="2"/>
+      <path d="M0 22 H46" stroke="#e7a9a0" stroke-width="5"/><path d="M14 13 Q18 -8 24 2 Q30 -10 32 13 Z" fill="#fff" stroke="#e4d6bd" stroke-width="1.5"/></g>`,
+    popcorn: () => popcorn(236, 132, 0.75),
+  };
+
+  /** What we'd wear for a movie: from its genres (TMDB names) and the time of year. */
+  function outfitFor(genres = [], season = null) {
+    const g = new Set(genres || []);
+    const has = (...xs) => xs.some((x) => g.has(x));
+    let face = 'smile';
+    const extras = [];
+    if (has('Horror', 'Thriller')) { face = 'shock'; extras.push('blanket'); }
+    else if (has('Action', 'Science Fiction', 'Adventure', 'Fantasy')) { extras.push('glasses3d', 'popcorn'); }
+    else if (has('Drama', 'Romance')) { face = g.has('Romance') ? 'love' : 'cry'; extras.push('tissues'); }
+    else if (has('Comedy')) { face = 'laugh'; extras.push('popcorn'); }
+    else if (has('Animation', 'Family', 'Music')) { extras.push('party'); }
+    else extras.push('popcorn');
+    if (season === 'christmas' || season === 'newyear') extras.push(season === 'christmas' ? 'santa' : 'party');
+    if (season === 'halloween') extras.push('witch');
+    return { face, extras: [...new Set(extras)] };
+  }
+
+  function couple(face = 'smile', extras = []) {
+    const front = extras.filter((x) => ACCESSORIES[x]).map((x) => ACCESSORIES[x]()).join('');
+    // Hats stick out above our heads: give them room.
+    const hats = extras.some((x) => x === 'party' || x === 'santa' || x === 'witch');
+    return `<svg class="couple" viewBox="${hats ? '0 -24 300 204' : '0 0 300 180'}" role="img" aria-label="Us">${place(him({ face }), 30, 18, 1)}${place(her({ face: face === 'smile' ? 'wink' : face }), 140, 20, 1)}${place(dog({ face: face === 'cry' ? 'cry' : 'smile' }), 108, 100, 0.72, 'bob')}${front}</svg>`;
+  }
+
+  /** A lipstick kiss mark. */
+  function lips() {
+    return `<svg class="lips" viewBox="0 0 120 70" aria-hidden="true">
+      <path d="M6 34 Q24 6 46 14 Q56 18 60 24 Q64 18 74 14 Q96 6 114 34 Q92 34 60 38 Q28 34 6 34 Z" fill="#c9343c"/>
+      <path d="M6 36 Q28 38 60 40 Q92 38 114 36 Q96 66 60 66 Q24 66 6 36 Z" fill="#b02631"/>
+      <path d="M22 30 Q40 20 54 28 M70 28 Q84 20 98 30 M30 48 Q60 58 90 48" stroke="#e46a72" stroke-width="2.5" fill="none" opacity=".7"/></svg>`;
   }
 
   function fetchingPup() {
@@ -246,5 +305,5 @@
   }
   const bowSvg = () => `<svg viewBox="-26 -14 52 34" aria-hidden="true">${bow(0, 0, 1)}</svg>`;
 
-  window.Art = { head, bowSvg, him, her, dog, scene, reaction, couple, fetchingPup, bow, heart, SCENES: Object.keys(SCENES), REACTIONS: Object.keys(REACTIONS) };
+  window.Art = { head, bowSvg, him, her, dog, scene, reaction, couple, outfitFor, lips, fetchingPup, bow, heart, SCENES: Object.keys(SCENES), REACTIONS: Object.keys(REACTIONS) };
 })();

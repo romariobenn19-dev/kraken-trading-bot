@@ -16,13 +16,14 @@ const Series = require('./public/series');
 
 const MAX_SNAPSHOT = 4 * 1024 * 1024;
 
-module.exports = function createFeatures({ ROOT, config, saveConfig, broadcast, clients, room, listMovies, loadMovie, startPlaying, publicLinks }) {
+module.exports = function createFeatures({ ROOT, LIBRARY, config, saveConfig, broadcast, clients, room, listMovies, loadMovie, startPlaying, publicLinks }) {
   const DATA_FILE = path.join(ROOT, 'data.json');
   const SNAPS = path.join(ROOT, 'personal', 'snapshots');
   let data = {};
   try { data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); } catch { /* first run */ }
   data = {
     progress: {}, diary: [], notes: [], votes: {}, schedule: null, people: {}, series: {}, favorites: {}, snaps: [], push: {},
+    reactions: [], predictions: {}, games: [], wishlist: [], counts: {},
     ...data,
   };
 
@@ -52,7 +53,131 @@ module.exports = function createFeatures({ ROOT, config, saveConfig, broadcast, 
       favorites: data.favorites,
       snaps: data.snaps.slice(-300),
       pushKey: vapid().publicKey,
+      reactions: data.reactions.slice(-5000),
+      // Predictions stay secret until the end of the movie.
+      predictions: Object.fromEntries(Object.entries(data.predictions).map(([mid, byName]) => [mid,
+        Object.fromEntries(Object.entries(byName).map(([n, pr]) => [n, pr.revealed ? pr : { made: true, at: pr.at }]))])),
+      games: data.games.slice(-300),
+      wishlist: data.wishlist,
+      counts: data.counts,
+      bingo: bingo ? { id: bingo.id, movieId: bingo.movieId, seed: bingo.seed, genres: bingo.genres, marks: bingo.marks, winners: bingo.winners } : null,
     };
+  }
+  const count = (k) => { data.counts[k] = (data.counts[k] || 0) + 1; save(); };
+  const wsOf = (c) => { for (const [ws, x] of clients) if (x === c) return ws; return null; };
+  const sendTo = (c, msg) => { const ws = wsOf(c); if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg)); };
+  const movieById = (mid) => listMovies().find((m) => m.id === mid);
+
+  // ---- Reactions (kept so they can be replayed when you rewatch) ---------------------
+  function recordReaction(by, key, movieId, t) {
+    if (!movieId || !Number.isFinite(t)) return;
+    data.reactions.push({ movieId, t: Math.round(t * 10) / 10, key, by, at: Date.now() });
+    if (data.reactions.length > 8000) data.reactions.splice(0, data.reactions.length - 8000);
+    save();
+  }
+
+  // ---- Quote quiz (made from the movie's subtitles) ----------------------------------
+  function subtitleLines(mv) {
+    const subs = Array.isArray(mv.subtitles) ? mv.subtitles : typeof mv.subtitles === 'string' ? [{ file: mv.subtitles, lang: 'en', label: '' }] : [];
+    const pick = subs.find((x) => /^en/i.test(x.lang || '') && !/sign|song|forced/i.test(x.label || ''))
+      || subs.find((x) => !/sign|song|forced/i.test(x.label || '')) || subs[0];
+    if (!pick) return [];
+    let text = '';
+    try { text = fs.readFileSync(path.join(LIBRARY, mv.id, pick.file), 'utf8'); } catch { return []; }
+    const lines = [];
+    const seen = new Set();
+    for (const block of text.replace(/\r/g, '').split(/\n\n+/)) {
+      const m = block.match(/(?:(\d+):)?(\d{1,2}):(\d{2})[.,](\d{3})\s*-->/);
+      if (!m) continue;
+      const t = (Number(m[1] || 0) * 3600) + Number(m[2]) * 60 + Number(m[3]);
+      const body = block.split('\n').filter((l) => !/-->/.test(l) && !/^\d+$/.test(l.trim()) && !/^WEBVTT/.test(l)).join(' ')
+        .replace(/<[^>]*>/g, '').replace(/\{[^}]*\}/g, '').replace(/^[-–\s]+/, '').replace(/\s+-\s+/g, ' ').replace(/\s+/g, ' ').trim();
+      const words = body.split(' ');
+      if (words.length < 5 || words.length > 16 || !/[a-z]/i.test(body) || /^[\[(♪]/.test(body)) continue;
+      const key = body.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      lines.push({ t, text: body });
+    }
+    return lines;
+  }
+  const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+  function makeQuiz(mv) {
+    const lines = subtitleLines(mv);
+    if (lines.length < 16) return null;
+    const dur = mv.duration || lines[lines.length - 1].t || 1;
+    const pool = shuffle(lines.slice());
+    const qs = [];
+    const take = () => pool.pop();
+    // Finish the line
+    for (let k = 0; k < 3; k++) {
+      const ln = take();
+      const w = ln.text.split(' ');
+      const cut = Math.max(2, Math.floor(w.length / 2));
+      const ending = w.slice(cut).join(' ');
+      const others = shuffle(lines.filter((x) => x !== ln)).slice(0, 3).map((x) => { const ww = x.text.split(' '); return ww.slice(Math.max(2, Math.floor(ww.length / 2))).join(' '); });
+      const options = shuffle([ending, ...others]);
+      qs.push({ type: 'finish', prompt: `${w.slice(0, cut).join(' ')} …`, options, answer: options.indexOf(ending) });
+    }
+    // Which came first?
+    for (let k = 0; k < 2; k++) {
+      const a = take();
+      const b = shuffle(lines.filter((x) => Math.abs(x.t - a.t) > dur * 0.15))[0];
+      if (!b) continue;
+      const options = shuffle([a, b]);
+      qs.push({ type: 'first', prompt: 'Which line came first?', options: options.map((x) => x.text), answer: options[0].t < options[1].t ? 0 : 1 });
+    }
+    // When was it said?
+    const ln = take();
+    qs.push({ type: 'when', prompt: `"${ln.text}"`, options: ['Near the start', 'In the middle', 'Near the end'], answer: Math.min(2, Math.floor((ln.t / dur) * 3)) });
+    return shuffle(qs);
+  }
+  let quiz = null;
+  function quizQuestion() {
+    const q = quiz.qs[quiz.i];
+    quiz.answers = {};
+    quiz.phase = 'q';
+    quiz.endsAt = Date.now() + 25000;
+    clearTimeout(quiz.timer);
+    quiz.timer = setTimeout(quizReveal, 25000);
+    broadcast({ t: 'quiz', phase: 'q', id: quiz.id, title: quiz.title, i: quiz.i, n: quiz.qs.length, q: { type: q.type, prompt: q.prompt, options: q.options }, endsAt: quiz.endsAt, scores: quiz.scores });
+  }
+  function quizReveal() {
+    if (!quiz || quiz.phase !== 'q') return;
+    quiz.phase = 'reveal';
+    clearTimeout(quiz.timer);
+    const q = quiz.qs[quiz.i];
+    for (const [n, a] of Object.entries(quiz.answers)) if (a === q.answer) quiz.scores[n] = (quiz.scores[n] || 0) + 1;
+    broadcast({ t: 'quiz', phase: 'reveal', id: quiz.id, i: quiz.i, correct: q.answer, answers: quiz.answers, scores: quiz.scores });
+    quiz.timer = setTimeout(() => {
+      if (!quiz) return;
+      quiz.i++;
+      if (quiz.i < quiz.qs.length) { quizQuestion(); return; }
+      const best = Math.max(0, ...Object.values(quiz.scores));
+      const winners = Object.keys(quiz.scores).filter((n) => quiz.scores[n] === best && best > 0);
+      data.games.push({ type: 'quiz', movieId: quiz.movieId, title: quiz.title, scores: quiz.scores, winners, of: quiz.qs.length, at: Date.now() });
+      broadcast({ t: 'quiz', phase: 'end', id: quiz.id, scores: quiz.scores, winners, n: quiz.qs.length });
+      quiz = null;
+      changed('games');
+    }, 4500);
+  }
+
+  // ---- Movie bingo ------------------------------------------------------------------------
+  let bingo = null;
+
+  // ---- Wishlist ---------------------------------------------------------------------------------
+  const norm = (t) => String(t).toLowerCase().replace(/\(\d{4}\)/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+  function wishesFulfilledBy(title) {
+    const t = norm(title);
+    for (const w of data.wishlist) {
+      const n = norm(w.title);
+      if (w.done || n.length < 3) continue;
+      if (t === n || t.startsWith(`${n} `) || (n.length >= 6 && t.includes(n))) {
+        w.done = true; w.doneAt = Date.now();
+        notify({ title: 'Your wish came true 🌟', body: `${title} is ready to watch.`, evenIfOnline: true });
+        changed('wishlist');
+      }
+    }
   }
 
   // ---- Watch progress (continue watching) ------------------------------------------
@@ -84,20 +209,22 @@ module.exports = function createFeatures({ ROOT, config, saveConfig, broadcast, 
       entry = { id: id(), movieId: mv.id, title: mv.title, date: today, at: Date.now(), minutes: Math.round(mv.duration / 60), ratings: {} };
       data.diary.push(entry);
     }
+    const preds = data.predictions[mv.id];
+    if (preds) for (const pr of Object.values(preds)) pr.revealed = true;
     save();
     broadcast({ t: 'rateMe', entryId: entry.id, movieId: mv.id, title: mv.title });
     broadcast({ t: 'fchanged', what: 'diary' });
   }
 
   // ---- Snapshots -----------------------------------------------------------------------
-  function saveSnapshot(buf, movieId, t, by) {
+  function saveSnapshot(buf, movieId, t, by, doodle) {
     if (!/^[a-z0-9-]+$/.test(movieId)) throw new Error('Bad movie');
     if (buf.length < 100 || buf[0] !== 0xff || buf[1] !== 0xd8) throw new Error('Not a JPEG image');
     fs.mkdirSync(SNAPS, { recursive: true });
     const file = `${movieId}-${Date.now()}.jpg`;
     fs.writeFileSync(path.join(SNAPS, file), buf);
     const mv = listMovies().find((m) => m.id === movieId);
-    const snap = { file: `/personal/snapshots/${file}`, movieId, title: mv ? mv.title : movieId, t: Number(t) || 0, by, at: Date.now() };
+    const snap = { file: `/personal/snapshots/${file}`, movieId, title: mv ? mv.title : movieId, t: Number(t) || 0, by, at: Date.now(), ...(doodle ? { doodle: true } : {}) };
     data.snaps.push(snap);
     changed('snaps');
     broadcast({ t: 'snap', by, title: snap.title });
@@ -255,6 +382,93 @@ module.exports = function createFeatures({ ROOT, config, saveConfig, broadcast, 
       case 'nextNow':
         playNext();
         return true;
+      // ---- Fun & games ----
+      case 'quizStart': {
+        if (quiz) { sendTo(c, { t: 'quiz', phase: 'busy' }); return true; }
+        const mv = movieById(String(msg.movieId || ''));
+        const qs = mv && makeQuiz(mv);
+        if (!qs) { sendTo(c, { t: 'quiz', phase: 'none', title: mv ? mv.title : '' }); return true; }
+        quiz = { id: id(), movieId: mv.id, title: mv.title, qs, i: 0, scores: Object.fromEntries(names().map((n) => [n, 0])), answers: {} };
+        quizQuestion();
+        return true;
+      }
+      case 'quizAnswer':
+        if (!quiz || quiz.phase !== 'q' || msg.id !== quiz.id || msg.i !== quiz.i || quiz.answers[c.name] !== undefined) return true;
+        quiz.answers[c.name] = Math.max(0, Math.min(3, Number(msg.choice) || 0));
+        if (!(c.name in quiz.scores)) quiz.scores[c.name] = 0;
+        broadcast({ t: 'quiz', phase: 'answered', id: quiz.id, i: quiz.i, who: Object.keys(quiz.answers) });
+        if (names().every((n) => quiz.answers[n] !== undefined)) quizReveal();
+        return true;
+      case 'quizStop':
+        if (quiz) { clearTimeout(quiz.timer); quiz = null; broadcast({ t: 'quiz', phase: 'stop', by: c.name }); }
+        return true;
+      case 'bingoStart': {
+        const mv = movieById(String(msg.movieId || room.movieId || ''));
+        if (!mv) return true;
+        bingo = { id: id(), movieId: mv.id, seed: Math.floor(Math.random() * 1e9), genres: (mv.tmdb && mv.tmdb.genres) || [], marks: {}, winners: [] };
+        broadcast({ t: 'bingo', phase: 'start', by: c.name, ...publicState().bingo });
+        return true;
+      }
+      case 'bingoMark':
+        if (!bingo || msg.id !== bingo.id || !Array.isArray(msg.cells)) return true;
+        bingo.marks[c.name] = msg.cells.filter((i) => Number.isInteger(i) && i >= 0 && i < 16).slice(0, 16);
+        broadcast({ t: 'bingo', phase: 'marks', id: bingo.id, marks: bingo.marks });
+        return true;
+      case 'bingoWin':
+        if (!bingo || msg.id !== bingo.id || bingo.winners.includes(c.name)) return true;
+        bingo.winners.push(c.name);
+        data.games.push({ type: 'bingo', movieId: bingo.movieId, winner: c.name, first: bingo.winners.length === 1, at: Date.now() });
+        broadcast({ t: 'bingo', phase: 'win', id: bingo.id, by: c.name, first: bingo.winners.length === 1 });
+        changed('games');
+        return true;
+      case 'bingoEnd':
+        bingo = null;
+        broadcast({ t: 'bingo', phase: 'end' });
+        return true;
+      case 'predict': {
+        const mid = String(msg.movieId || '');
+        if (!movieById(mid)) return true;
+        const text = String(msg.text || '').trim().slice(0, 200);
+        const stars = Math.max(0, Math.min(5, Math.round(Number(msg.stars) || 0)));
+        if (!text && !stars) return true;
+        (data.predictions[mid] || (data.predictions[mid] = {}))[c.name] = { text, stars, at: Date.now() };
+        changed('predictions');
+        broadcast({ t: 'predicted', by: c.name, movieId: mid });
+        return true;
+      }
+      case 'doodle': {
+        // Drawing on a paused frame: pass it straight to the other screen.
+        const kind = ['stroke', 'clear', 'open', 'close'].includes(msg.kind) ? msg.kind : null;
+        if (!kind) return true;
+        const out = { t: 'doodle', kind, from: c.name };
+        if (kind === 'stroke') {
+          if (!Array.isArray(msg.pts)) return true;
+          out.pts = msg.pts.slice(0, 400).map((v) => Math.max(0, Math.min(1, Number(v) || 0)));
+          out.c = /^#[0-9a-f]{6}$/i.test(msg.c) ? msg.c : '#e5484d';
+          out.w = Math.max(1, Math.min(30, Number(msg.w) || 6));
+          out.sid = String(msg.sid || '').slice(0, 16);
+        }
+        broadcast(out);
+        return true;
+      }
+      case 'wish': {
+        const title = String(msg.title || '').trim().slice(0, 100);
+        if (!title) return true;
+        data.wishlist.push({ id: id(), title, by: c.name, at: Date.now(), done: false });
+        if (data.wishlist.length > 100) data.wishlist.shift();
+        changed('wishlist');
+        notify({ title: 'Movie request 🎬', body: `${c.name} would love to watch ${title}`, except: c.name, evenIfOnline: true });
+        return true;
+      }
+      case 'wishDone': {
+        const w = data.wishlist.find((x) => x.id === msg.id);
+        if (w) { w.done = !w.done; w.doneAt = Date.now(); changed('wishlist'); }
+        return true;
+      }
+      case 'wishDelete':
+        data.wishlist = data.wishlist.filter((x) => x.id !== msg.id);
+        changed('wishlist');
+        return true;
       case 'tz':
         if (typeof msg.tz === 'string' && msg.tz.length < 60) {
           const p = data.people[c.name] || (data.people[c.name] = {});
@@ -286,7 +500,7 @@ module.exports = function createFeatures({ ROOT, config, saveConfig, broadcast, 
       if (req.method === 'GET' && pathname === '/api/f/state') return json(res, 200, publicState());
       if (req.method === 'POST' && pathname === '/api/f/snapshot') {
         const buf = await readRaw(req, MAX_SNAPSHOT);
-        const snap = saveSnapshot(buf, url.searchParams.get('movieId') || '', url.searchParams.get('t'), String(url.searchParams.get('by') || 'Someone').slice(0, 30));
+        const snap = saveSnapshot(buf, url.searchParams.get('movieId') || '', url.searchParams.get('t'), String(url.searchParams.get('by') || 'Someone').slice(0, 30), url.searchParams.get('doodle') === '1');
         return json(res, 200, snap);
       }
       if (req.method === 'POST' && pathname === '/api/f/push') {
@@ -307,11 +521,12 @@ module.exports = function createFeatures({ ROOT, config, saveConfig, broadcast, 
   }
 
   return {
-    handle, onDisconnect, http, trackProgress, notify,
+    handle, onDisconnect, http, trackProgress, notify, recordReaction, count,
+    onMovieChanged: () => { if (bingo) { bingo = null; broadcast({ t: 'bingo', phase: 'end' }); } },
     progressOf: (movieId) => data.progress[movieId] || null,
     hasCountdownFor: (movieId) => (data.progress[movieId] || {}).pos > 3,
-    onNewMovie: (title) => notify({ title: 'New movie ready 🎬', body: `${title} is ready to watch.` }),
-    onMovieLoaded: (title, by) => notify({ title: `${by} started Movie Night 🍿`, body: title, except: by }),
+    onNewMovie: (title) => { notify({ title: 'New movie ready 🎬', body: `${title} is ready to watch.` }); wishesFulfilledBy(title); },
+    onMovieLoaded: (title, by, surprise) => notify({ title: `${by} started Movie Night 🍿`, body: surprise ? '🎁 A surprise movie!' : title, except: by }),
     snapsDir: SNAPS,
   };
 };

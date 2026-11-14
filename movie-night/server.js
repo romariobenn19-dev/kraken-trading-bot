@@ -298,6 +298,8 @@ function publicState() {
   return {
     t: 'state', v: room.version, movieId: room.movieId, paused: room.paused, wantPlay: room.wantPlay,
     pos: room.pos, at: room.at, hold: room.hold, resumeTarget: resumeTarget(), startBuffer: START_BUFFER,
+    intermission: room.intermission ? { until: room.intermission.until, by: room.intermission.by } : null,
+    surprise: !!room.movieId && room.surprise === room.movieId,
   };
 }
 
@@ -401,16 +403,17 @@ function handle(ws, c, msg) {
     case 'load': {
       if (typeof msg.movieId !== 'string') return;
       if (room.movieId) features.trackProgress(nowPos(), true);
-      const wasEmpty = !room.movieId;
+      room.surprise = msg.surprise && msg.movieId ? msg.movieId : null;
       loadMovie(msg.movieId, Number.isFinite(msg.pos) ? msg.pos : undefined);
-      if (msg.movieId && (wasEmpty || msg.movieId)) {
+      if (msg.movieId) {
         const mv = listMovies().find((m) => m.id === msg.movieId);
-        if (mv) features.onMovieLoaded(mv.title, c.name);
+        if (mv) features.onMovieLoaded(mv.title, c.name, !!room.surprise);
       }
       break;
     }
     case 'play':
       if (!room.movieId) return;
+      clearIntermission();
       for (const other of clients.values()) other.late = false;
       room.wantPlay = true;
       setPosition(Number.isFinite(msg.pos) ? msg.pos : room.pos, true);
@@ -458,8 +461,34 @@ function handle(ws, c, msg) {
       host.onStatus(c, msg);
       evaluate();
       break;
-    case 'react':
-      broadcast({ t: 'react', from: c.name, emoji: String(msg.emoji || '').slice(0, 8) });
+    case 'react': {
+      const emoji = String(msg.emoji || '').slice(0, 8);
+      const pos = room.movieId ? nowPos() : null;
+      broadcast({ t: 'react', from: c.name, emoji, movieId: room.movieId, pos, at: Date.now() });
+      if (room.movieId) features.recordReaction(c.name, emoji, room.movieId, pos);
+      break;
+    }
+    case 'intermission': {
+      // Snack break: pause together for a few minutes, then carry on together.
+      if (!room.movieId) return;
+      const mins = Math.max(1, Math.min(20, Number(msg.minutes) || 5));
+      room.wantPlay = false; room.hold = null;
+      setPosition(nowPos(), true);
+      features.trackProgress(room.pos, true);
+      room.intermission = { until: Date.now() + mins * 60000, by: c.name };
+      scheduleIntermissionEnd();
+      features.count('intermission');
+      changed();
+      break;
+    }
+    case 'intermissionMore':
+      if (!room.intermission) return;
+      room.intermission.until = Math.max(room.intermission.until, Date.now()) + 2 * 60000;
+      scheduleIntermissionEnd();
+      changed();
+      break;
+    case 'intermissionEnd':
+      if (room.intermission) endIntermission();
       break;
     case 'want': {
       // "Watch this now" on a movie that's still waiting to be converted.
@@ -534,6 +563,9 @@ function startWithCurtains() {
 
 /** Open a movie on every screen (resuming where you left off unless told otherwise). */
 function loadMovie(movieId, pos) {
+  if ((movieId || null) !== room.movieId) features.onMovieChanged();
+  clearIntermission();
+  if (room.surprise && room.surprise !== movieId) room.surprise = null;
   room.movieId = movieId || null;
   room.wantPlay = false; room.hold = null; room.stalls = 0;
   let start = pos;
@@ -543,6 +575,21 @@ function loadMovie(movieId, pos) {
   }
   setPosition(start || 0, true);
   changed();
+}
+
+let intermissionTimer = null;
+function scheduleIntermissionEnd() {
+  clearTimeout(intermissionTimer);
+  intermissionTimer = setTimeout(endIntermission, Math.max(0, room.intermission.until - Date.now()));
+}
+function clearIntermission() {
+  clearTimeout(intermissionTimer);
+  room.intermission = null;
+}
+/** Break's over: everyone back on the sofa, the movie carries on together. */
+function endIntermission() {
+  clearIntermission();
+  if (room.movieId) startPlaying(); else changed();
 }
 
 function startPlaying() {
@@ -727,7 +774,7 @@ function restart() {
 }
 
 const features = createFeatures({
-  ROOT, config, saveConfig, broadcast, clients, room, listMovies, loadMovie, startPlaying, publicLinks: () => links(),
+  ROOT, LIBRARY, config, saveConfig, broadcast, clients, room, listMovies, loadMovie, startPlaying, publicLinks: () => links(),
 });
 const tmdb = createTmdb({ LIBRARY, config, listMovies, onUpdated: () => broadcast({ t: 'library' }) });
 

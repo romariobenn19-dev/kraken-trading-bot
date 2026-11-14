@@ -1,6 +1,6 @@
 {
   "name": "movie-night",
-  "version": "2.4.3",
+  "version": "2.5.0",
   "private": true,
   "description": "Synced long-distance movie nights: the host laptop does the heavy lifting, the partner's tablet just plays.",
   "main": "server.js",
@@ -28,6 +28,7 @@
       "prepare.js",
       "subtitles.js",
       "public/together.js",
+      "public/fun.js",
       "watchfolder.js",
       "public/home.js",
       "public/series.js",

@@ -203,7 +203,7 @@ function connect() {
     if (m.t === 'state') onState(m);
     else if (m.t === 'pong') onPong(m);
     else if (m.t === 'peers') { peers = m.peers; renderPeers(); renderHold(); }
-    else if (m.t === 'react') floatEmoji(m.emoji, m.from);
+    else if (m.t === 'react') { floatEmoji(m.emoji, m.from); if (typeof onReactEvent === 'function') onReactEvent(m); }
     else if (m.t === 'welcome') onWelcome(m);
     else if (m.t === 'replaced') onReplaced();
     else if (m.t === 'jobs') renderJobs(m.jobs);
@@ -740,7 +740,7 @@ function showChrome() {
   $('chrome').classList.remove('off');
   clearTimeout(hideTimer);
   hideTimer = setTimeout(() => {
-    if (state && !state.paused && !seeking) $('chrome').classList.add('off');
+    if (state && !state.paused && !seeking && $('funMenu').classList.contains('hidden')) $('chrome').classList.add('off');
   }, 3500);
 }
 $('stage').addEventListener('pointerdown', (e) => {
@@ -1141,8 +1141,12 @@ async function loadPersonal() {
 }
 
 function renderIntermission() {
+  if (typeof renderSnackBreak === 'function' && renderSnackBreak()) return; // a snack break is on
+  const el = $('intermission');
+  if (el.classList.contains('snack')) return;
+  if (!el.textContent.trim() || el.children.length > 1) el.innerHTML = `<span class="title-bow">${Art.bowSvg()}</span>Intermission`;
   const show = !!(state && meta && state.paused && !state.wantPlay && !state.hold && video.currentTime > 5);
-  $('intermission').classList.toggle('hidden', !show);
+  el.classList.toggle('hidden', !show);
 }
 
 // Personalize dialog (laptop only)

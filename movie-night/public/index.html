@@ -14,6 +14,7 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+  <div id="seasonFx" class="season-fx" aria-hidden="true"></div>
   <!-- Join -->
   <section id="join" class="screen">
     <div class="collage" id="joinCollage" aria-hidden="true"></div>
@@ -44,6 +45,7 @@
     </nav>
 
     <div id="tab-home" class="tab-panel">
+      <div id="seasonBanner" class="season-banner hidden"></div>
       <div id="countdownCard" class="countdown-card"></div>
       <div id="hero" class="hero hidden"></div>
 
@@ -66,7 +68,9 @@
       <div id="httpsNote" class="https-note hidden"></div>
       <div id="jobs" class="jobs"></div>
 
+      <div id="moods" class="moods"></div>
       <div id="rows" class="rows"></div>
+      <section id="wishlist" class="wishlist"></section>
       <div id="movies" class="hidden"></div>
       <div id="noMovies" class="empty hidden">
         <div id="emptyArt" class="empty-art"></div>
@@ -79,7 +83,10 @@
     </div>
 
     <div id="tab-diary" class="tab-panel hidden">
+      <div class="diary-actions"><button id="wrappedBtn" class="primary">✨ Our Year Wrapped</button></div>
       <div id="diaryStats" class="diary-stats"></div>
+      <h3 class="section-title">Our badges</h3>
+      <div id="badges" class="badges"></div>
       <div id="diaryList" class="diary-list"></div>
     </div>
 
@@ -109,6 +116,11 @@
       </div>
 
       <button id="tapToPlay" class="tap hidden">▶ Tap to continue</button>
+      <canvas id="doodleCanvas" class="doodle-canvas hidden"></canvas>
+      <div id="doodleBar" class="doodle-bar hidden"></div>
+      <div id="bingoPanel" class="bingo-panel hidden"></div>
+      <div id="surpriseReveal" class="surprise-reveal hidden" role="status"></div>
+      <div id="lipsLayer" class="lips-layer" aria-hidden="true"></div>
       <div id="floaters"></div>
       <div id="hearts" class="hearts-layer" aria-hidden="true"></div>
       <div id="chatLog" class="chat-log" aria-live="polite"></div>
@@ -134,6 +146,8 @@
             <input id="chatInput" maxlength="240" placeholder="Say something sweet…" aria-label="Chat message">
             <button class="icon" type="submit" aria-label="Send">➤</button>
           </form>
+          <div id="funMenu" class="fun-menu hidden" role="menu" aria-label="Games & fun"></div>
+          <div id="reactMarks" class="react-marks" aria-hidden="true"></div>
           <input id="seek" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek">
           <div class="row">
             <button id="back10" class="icon" title="Back 10s">⟲10</button>
@@ -145,6 +159,7 @@
             <button id="chatBtn" class="icon" title="Chat" aria-label="Chat">💬</button>
             <button id="noteBtn" class="icon" title="Leave a love note here" aria-label="Leave a love note">💌</button>
             <button id="snapBtn" class="icon" title="Save this moment to our diary" aria-label="Snapshot">📸</button>
+            <button id="funBtn" class="icon" title="Games & fun" aria-label="Games and fun" aria-haspopup="menu">✨</button>
             <button id="cuddleBtn" class="icon cuddle-btn" title="Hold to cuddle" aria-label="Hold to cuddle">🤗</button>
             <button id="subsBtn" class="icon hidden" title="Subtitles">CC</button>
             <select id="quality" title="Quality"></select>
@@ -299,6 +314,34 @@
     </div>
   </div>
 
+  <div id="quizSheet" class="modal hidden" role="dialog" aria-modal="true" aria-label="Quote quiz">
+    <div class="sheet quiz-sheet" id="quizBody"></div>
+  </div>
+
+  <div id="predictSheet" class="modal hidden" role="dialog" aria-modal="true" aria-label="Make a prediction">
+    <div class="sheet">
+      <header class="sheet-head"><b>🔮 Your prediction</b><button class="ghost small" data-close="predictSheet" aria-label="Close">✕</button></header>
+      <div class="confirm">
+        <p class="muted small">It stays secret until the end of the movie, then you both see what you guessed.</p>
+        <label for="predictText">What do you think happens?</label>
+        <textarea id="predictText" maxlength="200" rows="3" placeholder="e.g. The dog saves everyone. They kiss at the end."></textarea>
+        <div class="field-title">How many stars will you give it?</div>
+        <div id="predictStars" class="rate-stars" role="radiogroup" aria-label="Predicted stars"></div>
+        <div class="row"><span class="spacer"></span><button id="predictSave" class="primary">Seal my prediction 🔮</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="wrappedView" class="wrapped hidden" role="dialog" aria-modal="true" aria-label="Our Year Wrapped"></div>
+
+  <div id="postcardView" class="modal hidden" role="dialog" aria-modal="true" aria-label="Movie postcard">
+    <div class="sheet postcard-sheet">
+      <header class="sheet-head"><b>💌 Our postcard</b><button class="ghost small" data-close="postcardView" aria-label="Close">✕</button></header>
+      <img id="postcardImg" alt="Movie postcard">
+      <div class="row pad"><span class="spacer"></span><button id="postcardShare" class="ghost">Share…</button><a id="postcardSave" class="primary btn-link" download="movie-postcard.png">⬇ Save</a></div>
+    </div>
+  </div>
+
   <div id="photoView" class="modal hidden" role="dialog" aria-modal="true" aria-label="Photo"><img id="photoImg" alt=""></div>
 
   <div id="toast" class="toast hidden"></div>
@@ -309,5 +352,6 @@
   <script src="/app.js"></script>
   <script src="/home.js"></script>
   <script src="/together.js"></script>
+  <script src="/fun.js"></script>
 </body>
 </html>

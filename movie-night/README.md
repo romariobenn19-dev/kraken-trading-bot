@@ -50,6 +50,18 @@ If Windows says *"Windows protected your PC"*, click **More info**, then **Run a
 - 💌 love notes: leave a note at a moment in a movie; it pops up for the other person when they reach it
 - 📸 snapshot: saves the current frame to your diary (and the "Our moments" strip)
 
+**✨ Fun & games** (tap ✨ while watching):
+- **Reactions** float up on both screens and leave little marks on the seek bar where you reacted most. **Reaction replay:** when you rewatch a movie, your reactions from last time pop up at the same moments.
+- **💋 Send a kiss:** a lipstick mark appears on both screens.
+- **🍿 Snack break:** pauses both screens with a 5-minute countdown (+2 min if you need it); the movie carries on together when it ends, or press "Back to the movie".
+- **✏️ Doodle:** pauses and lets you both draw on the picture; you see each other's drawing live. **Save to diary** keeps it.
+- **🎯 Movie bingo:** you each get a card of things that happen in movies like this one (horror, romance, action…). Tap a square when it happens; the first line gets a celebration on both screens.
+- **🔮 Predictions:** guess what happens and how many stars you'll give. They stay secret until the end, then show on the rating card and in the diary.
+- **🎬 Quote quiz:** after the movie, a quiz made from its subtitles ("finish the line", "which came first?", "when was this said?"). You both answer; scores go in the diary. Needs subtitles on the movie. (Subtitles don't say who's speaking, so it's quotes rather than "who said it".)
+- **🎁 Surprise movie:** tap 🎁 on a movie and its name stays hidden on both screens until the curtains open.
+
+**Also new:** 26 **badges** (streaks, marathons, first horror night, anniversary night…) in the diary, **✨ Our Year Wrapped** (a story-style recap of your year), a **💌 postcard** for each movie (save or share it), a **mood picker** on the home screen (cosy, scary, laugh, cry… needs the TMDB key), **Our wishlist** (add movies you want; the laptop gets a note, and it's ticked off when the movie arrives), **seasonal themes** (snow at Christmas, bats at Halloween, hearts on Valentine's and your anniversary), and the cartoon three of you **dress up for the movie** (blanket for horror, 3D glasses for action, tissues for drama, Santa hats in December).
+
 **📖 Our diary:** after each movie you're both asked for stars and a one-line review. Each movie becomes a scrapbook page with your ratings, quotes, love notes and snapshots, plus stats: movies together, hours together, each of your favourites.
 
 **🎲 Pick together:** swipe ♥ or ✗ on what you haven't watched. When you both ♥ the same one it's a match. **Spin the wheel** spins on both screens and lands on the same pick.

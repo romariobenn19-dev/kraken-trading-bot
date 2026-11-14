@@ -2,7 +2,8 @@
  * movie-night countdown and notifications. Uses globals from app.js. */
 'use strict';
 
-let fstate = { progress: {}, diary: [], notes: [], votes: {}, schedule: null, people: {}, series: {}, favorites: {}, snaps: [], pushKey: null };
+let fstate = { progress: {}, diary: [], notes: [], votes: {}, schedule: null, people: {}, series: {}, favorites: {}, snaps: [], pushKey: null,
+  reactions: [], predictions: {}, games: [], wishlist: [], counts: {}, bingo: null };
 let currentTab = store.get('mn_tab') || 'home';
 const myName = () => store.get('mn_name') || '';
 
@@ -296,7 +297,7 @@ function renderDiary() {
     const snaps = fstate.snaps.filter((s) => s.movieId === e.movieId).slice(-6);
     const notes = fstate.notes.filter((n) => n.movieId === e.movieId);
     const mineRated = !!e.ratings[myName()];
-    return `<article class="page">
+    return `<article class="page" data-entry="${e.id}">
       <div class="page-poster" ${img ? `style="background-image:url('${img}')"` : ''}>${img ? '' : Art.scene('cinema')}</div>
       <div class="page-body">
         <div class="page-date">${new Date(e.at).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })}</div>

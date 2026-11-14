@@ -17,7 +17,7 @@ function onFeatureMessage(m) {
     case 'wantAck': toast(m.by === myName()
       ? `⏳ Getting "${m.title}" ready. It'll open on both screens in about a minute.`
       : `⏳ ${m.by} picked "${m.title}". It'll open on both screens in about a minute.`, 7000); break;
-    default:
+    default: if (typeof onFunMessage === 'function') onFunMessage(m);
   }
 }
 
@@ -236,13 +236,15 @@ function afterOpenMovie() {
   $('nextUp').classList.add('hidden');
   $('chatBar').classList.add('hidden');
   updateSkipIntro();
+  if (typeof funAfterOpen === 'function') funAfterOpen();
 }
 function afterCloseMovie() {
   $('nextUp').classList.add('hidden');
   $('curtains').classList.add('hidden');
+  if (typeof funAfterClose === 'function') funAfterClose();
   loadFeatures();
 }
-function afterState() { updateSkipIntro(); }
-function afterFeatures() { updateNotifyButton(); drawArt(); }
+function afterState() { updateSkipIntro(); if (typeof funAfterState === 'function') funAfterState(); }
+function afterFeatures() { updateNotifyButton(); drawArt(); if (typeof funAfterFeatures === 'function') funAfterFeatures(); }
 
 loadFeatures();
