@@ -412,8 +412,14 @@ async function main() {
   // Safety version: the lightest one, made at the same time as the first so a poor
   // connection can drop to it instead of pausing, even while the movie is converting.
   const safety = jobs.filter((j) => j.family === watchFirst.family && j !== watchFirst).sort((a, b) => a.kbps - b.kbps)[0] || null;
-  jobs = [watchFirst, ...(safety ? [safety] : []), ...(avcTop && avcTop !== watchFirst ? [avcTop] : []),
-    ...jobs.filter((j) => j !== watchFirst && j !== avcTop && j !== safety)];
+  // Middle version: full 1080p at ~1.6 Mbps (1080p Lite), so a so-so connection gets a sharp
+  // picture instead of dropping all the way to 360p while the movie is still converting.
+  const same = jobs.filter((j) => j.family === watchFirst.family && j !== watchFirst && j !== safety);
+  const middle = same.find((j) => j.tag === 'lite')
+    || same.filter((j) => j.kbps < watchFirst.kbps * 0.6 && j.kbps > (safety ? safety.kbps * 2 : 0)).sort((a, b) => b.width - a.width || b.kbps - a.kbps)[0] || null;
+  const first = [watchFirst, middle, safety].filter(Boolean);
+  jobs = [...first, ...(avcTop && avcTop !== watchFirst ? [avcTop] : []),
+    ...jobs.filter((j) => !first.includes(j) && j !== avcTop)];
 
   // Poster and subtitles first (seconds), so the movie looks complete the moment it appears.
   const poster = path.join(outDir, 'poster.jpg');
@@ -482,7 +488,7 @@ async function main() {
 
   // Step 1: the version you watch + the safety version, side by side, both watchable while
   // they convert. The movie is published once both have ~30 s ready.
-  const firstBatch = jobs.slice(0, safety ? 2 : 1);
+  const firstBatch = jobs.slice(0, first.length);
   // Already watchable (e.g. an older movie just getting its safety version)? Then don't show
   // anything half-made: the new version joins once it's complete.
   const isDone = (j) => fs.existsSync(path.join(outDir, dirOf(j), '.done'));
@@ -545,7 +551,7 @@ async function main() {
     if (!final && !growing.length && step.n === firstBatchSize()) console.log('\n  First versions finished - making the backup versions...');
   }
 
-  function firstBatchSize() { return safety ? 2 : 1; }
+  function firstBatchSize() { return first.length; }
 
   await subtitlesReady;
   const complete = done.hevc.length + done.avc.length === jobs.length;
