@@ -61,7 +61,7 @@ module.exports = function createFeatures({ ROOT, LIBRARY, discover, config, save
   data = {
     progress: {}, diary: [], notes: [], votes: {}, schedule: null, people: {}, series: {}, favorites: {}, snaps: [], push: {},
     reactions: [], predictions: {}, games: [], wishlist: [], counts: {},
-    daily: {}, emoji: [], tot: {}, activity: [], badgeLog: {},
+    daily: {}, emoji: [], tot: {}, activity: [], badgeLog: {}, wheelPicks: null,
     ...data,
   };
 
@@ -92,6 +92,8 @@ module.exports = function createFeatures({ ROOT, LIBRARY, discover, config, save
         .map(([date, v]) => ({ date, q: v.q || dailyQuestion(date), answers: v.answers })),
       emoji: [dailyEmoji(today), ...data.emoji.slice(-30)].map((p) => ({ ...p, answer: solvedOrMine(p) ? p.answer : undefined, letters: p.answer.replace(/[^a-z0-9]/gi, '').length })),
       tot: data.tot,
+      wheelPicks: data.wheelPicks,
+      wheelLive: liveWheel(),
       activity: data.activity.slice(-60),
       badgeLog: data.badgeLog,
       progress: data.progress,
@@ -255,6 +257,17 @@ module.exports = function createFeatures({ ROOT, LIBRARY, discover, config, save
 
   // ---- Movie bingo ------------------------------------------------------------------------
   let bingo = null;
+
+  // ---- The wheel: films you chose, "come watch" calls, a fair spin -------------------------
+  let wheelLive = null; // { phase: 'calling'|'spinning', by, watchers: [], at }
+  let wheelTimer = null;
+  const liveWheel = () => (wheelLive ? { phase: wheelLive.phase, by: wheelLive.by, watchers: wheelLive.watchers, at: wheelLive.at } : null);
+  function setWheelLive(v, ttl) {
+    wheelLive = v;
+    clearTimeout(wheelTimer);
+    if (v && ttl) wheelTimer = setTimeout(() => { wheelLive = null; broadcast({ t: 'wheelLive', live: null }); }, ttl);
+    broadcast({ t: 'wheelLive', live: liveWheel() });
+  }
 
   // ---- Wishlist ---------------------------------------------------------------------------------
   const norm = (t) => String(t).toLowerCase().replace(/\(\d{4}\)/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
@@ -465,9 +478,40 @@ module.exports = function createFeatures({ ROOT, LIBRARY, discover, config, save
         data.votes = {};
         changed('votes');
         return true;
-      case 'wheel':
-        // Everyone sees the same spin and the same winner.
-        if (typeof msg.key === 'string') broadcast({ t: 'wheel', key: msg.key, keys: Array.isArray(msg.keys) ? msg.keys.slice(0, 40) : [], by: c.name, at: Date.now() + 300 });
+      case 'wheel': {
+        // Everyone sees the same spin and the same winner, chosen here so it's fair.
+        const keys = Array.isArray(msg.keys) ? [...new Set(msg.keys.filter((k) => typeof k === 'string' && k.length <= 120))].slice(0, 16) : [];
+        if (keys.length < 1) return true;
+        const key = keys[crypto.randomInt(keys.length)];
+        const watchers = wheelLive ? [...new Set([...wheelLive.watchers, c.name])] : [c.name];
+        setWheelLive({ phase: 'spinning', by: c.name, watchers, at: Date.now() }, 60000);
+        broadcast({ t: 'wheel', key, keys, by: c.name, watchers, at: Date.now() + 300 });
+        logActivity('wheel', c.name, 'spun the wheel 🎡');
+        return true;
+      }
+      case 'wheelSet': {
+        const keys = Array.isArray(msg.keys) ? [...new Set(msg.keys.filter((k) => typeof k === 'string' && k.length <= 120))].slice(0, 12) : [];
+        data.wheelPicks = keys.length ? { keys, by: c.name, at: Date.now() } : null;
+        changed('wheel');
+        return true;
+      }
+      case 'wheelCall': {
+        // "Come watch me spin!" on every screen, and a notification on her phone.
+        setWheelLive({ phase: 'calling', by: c.name, watchers: [c.name], at: Date.now() }, 10 * 60000);
+        broadcast({ t: 'wheelCall', by: c.name, at: Date.now() });
+        notify({ title: '🎡 Wheel time!', body: `${c.name} is about to spin the wheel. Come watch!`, except: c.name, evenIfOnline: true });
+        return true;
+      }
+      case 'wheelWatch':
+        if (!wheelLive) return true;
+        if (!wheelLive.watchers.includes(c.name)) wheelLive.watchers.push(c.name);
+        broadcast({ t: 'wheelLive', live: liveWheel(), joined: c.name });
+        return true;
+      case 'wheelLeave':
+        if (!wheelLive) return true;
+        wheelLive.watchers = wheelLive.watchers.filter((n) => n !== c.name);
+        if (!wheelLive.watchers.length || (wheelLive.phase === 'calling' && wheelLive.by === c.name)) setWheelLive(null);
+        else broadcast({ t: 'wheelLive', live: liveWheel() });
         return true;
       case 'schedule': {
         const at = msg.at ? new Date(msg.at) : null;
@@ -660,6 +704,10 @@ module.exports = function createFeatures({ ROOT, LIBRARY, discover, config, save
 
   function onDisconnect(c) {
     if (holding.delete(c.name)) cuddleState();
+    if (wheelLive && wheelLive.watchers.includes(c.name)) {
+      wheelLive.watchers = wheelLive.watchers.filter((n) => n !== c.name);
+      broadcast({ t: 'wheelLive', live: liveWheel() });
+    }
   }
 
   // ---- HTTP (/api/f/...) for both of you ------------------------------------------------

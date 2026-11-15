@@ -920,3 +920,38 @@ blockquote.pull { margin: 0; padding: 4px 0 4px 14px; border-left: 4px solid var
 .verdict > div { display: grid; }
 .verdict-score { font: 700 30px Georgia, serif; color: #8e3b4a; min-width: 52px; text-align: center; }
 .verdict-badge { font-weight: 800; }
+
+/* ===================== The wheel: choose, call, spin ===================== */
+.wheel-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 22px; padding: 16px 18px; margin: 0 0 18px; box-shadow: var(--shadow); display: grid; gap: 12px; }
+.wheel-panel-top { display: flex; gap: 16px; align-items: center; }
+.wheel-panel-text { display: grid; gap: 4px; min-width: 0; }
+.wheel-panel h3 { margin: 0; font: 700 22px Georgia, serif; }
+.mini-wheel { width: 92px; height: 92px; border-radius: 50%; flex: none; position: relative; display: grid; place-items: center; box-shadow: 0 6px 16px rgba(110, 76, 50, .2), inset 0 0 0 4px #fffaf2; }
+.mini-wheel span { width: 34px; height: 34px; border-radius: 50%; background: #fffaf2; display: grid; place-items: center; font-weight: 800; color: var(--accent); }
+.mini-wheel.empty { background: var(--panel-2); font-size: 40px; }
+.wheel-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.wheel-chip { display: inline-flex; align-items: center; gap: 4px; background: var(--panel-2); border-radius: 999px; padding: 4px 6px 4px 12px; font-size: 14px; font-weight: 600; }
+.wheel-chip button { border: 0; background: none; cursor: pointer; color: var(--muted); padding: 0 4px; font-size: 13px; }
+.wheel-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.wheel-actions .primary { padding: 11px 22px; }
+.wheel-live { font-weight: 700; color: var(--accent); }
+.primary.pulse { animation: kissPulse 1.4s ease-in-out infinite; }
+.wheel-pick { width: min(820px, 100%); }
+.wp-quick { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 12px 18px 0; }
+.wp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 12px; padding: 14px 18px; overflow-y: auto; }
+.wp-item { display: grid; gap: 4px; text-align: left; background: none; border: 0; padding: 0; cursor: pointer; color: var(--text); font: inherit; }
+.wp-img { position: relative; aspect-ratio: 2 / 3; border-radius: 14px; background: var(--panel-2) center/cover; border: 3px solid transparent; transition: border-color .15s, transform .15s; }
+.wp-item.on .wp-img { border-color: var(--accent); transform: scale(.97); }
+.wp-check { position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; font-weight: 800; }
+.wp-item b { font-size: 14px; line-height: 1.25; }
+.wp-foot { border-top: 1px solid var(--line); padding: 12px 18px; align-items: center; }
+.invite-card { width: min(460px, 100%); padding: 22px; text-align: center; display: grid; gap: 10px; justify-items: center; animation: reveal .6s cubic-bezier(.2, 1.4, .4, 1); }
+.invite-card h2 { margin: 0; font: 700 24px Georgia, serif; }
+.invite-wheel .mini-wheel { width: 130px; height: 130px; animation: spinSlow 6s linear infinite; }
+@keyframes spinSlow { to { transform: rotate(360deg); } }
+#wheelInvite { z-index: 45; }
+.lobby { display: flex; justify-content: center; gap: 14px; flex-wrap: wrap; }
+.lobby-person { display: flex; align-items: center; gap: 6px; font-weight: 700; }
+.lobby-person .avatar { width: 34px; height: 34px; }
+.row.center { justify-content: center; }
+@media (max-width: 520px) { .wheel-panel-top { align-items: flex-start; } .mini-wheel { width: 70px; height: 70px; } }

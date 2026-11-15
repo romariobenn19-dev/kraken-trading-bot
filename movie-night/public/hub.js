@@ -414,3 +414,187 @@ renderHome = function () {
   renderDiscover();
   loadDiscover();
 };
+
+// =================================================================================
+// The wheel: choose the films, call her to come watch, spin together
+// =================================================================================
+/** Every movie and show you could put on the wheel (watched ones too). */
+function wheelItems() {
+  const { series, movies: singles } = Series.group(movies.filter((m) => !m.pending));
+  const out = [];
+  for (const s of series) {
+    const ep = s.episodes.find((e) => !isDone(e)) || s.episodes[0];
+    out.push({ key: `series:${s.key}`, title: s.show, sub: `Next: ${epLabel(ep.ep)}`, play: ep, img: imageFor(ep), done: s.episodes.every(isDone) });
+  }
+  for (const m of singles) {
+    out.push({ key: `movie:${m.id}`, title: (m.tmdb && m.tmdb.title) || m.title, sub: [m.tmdb && m.tmdb.year, fmt(m.duration)].filter(Boolean).join(' · '),
+      play: m, img: imageFor(m, 'tall') || imageFor(m), done: isDone(m) });
+  }
+  return out;
+}
+const WHEEL_COLORS = ['#e9b4ab', '#c9976a', '#b2606b', '#f3d27a', '#9ec5de', '#d9c4a5'];
+/** What's on the wheel: the films you chose, else your matches, else what you haven't watched. */
+function wheelPool() {
+  const all = wheelItems();
+  const chosen = ((fstate.wheelPicks && fstate.wheelPicks.keys) || []).map((k) => all.find((x) => x.key === k)).filter(Boolean);
+  if (chosen.length) return { items: chosen, source: 'chosen' };
+  const me = myName();
+  const mine = (fstate.votes || {})[me] || {};
+  const others = Object.keys(fstate.votes || {}).filter((n) => n !== me);
+  const matches = all.filter((it) => mine[it.key] === 1 && others.some((n) => (fstate.votes[n] || {})[it.key] === 1));
+  if (matches.length >= 2) return { items: matches.slice(0, 12), source: 'matches' };
+  return { items: all.filter((x) => !x.done).slice(0, 8), source: 'unwatched' };
+}
+function miniWheel(items) {
+  if (!items.length) return '<div class="mini-wheel empty">🎡</div>';
+  const seg = 360 / items.length;
+  return `<div class="mini-wheel" style="background:conic-gradient(${items.map((p, i) => `${WHEEL_COLORS[i % WHEEL_COLORS.length]} ${i * seg}deg ${(i + 1) * seg}deg`).join(',')})"><span>${items.length}</span></div>`;
+}
+let wheelLive = null;
+function renderWheelPanel() {
+  const el = $('wheelPanel');
+  if (!el) return;
+  const { items, source } = wheelPool();
+  const other = partnerName();
+  const live = wheelLive || fstate.wheelLive;
+  const calling = live && live.phase === 'calling';
+  const watchers = live ? live.watchers.filter((n) => n !== myName()) : [];
+  const srcText = source === 'chosen' ? `Chosen by ${escapeHtml(fstate.wheelPicks.by === myName() ? 'you' : fstate.wheelPicks.by)}`
+    : source === 'matches' ? 'Your matches (choose your own with ✏️)' : 'What you haven\'t watched (choose your own with ✏️)';
+  el.innerHTML = `<div class="wheel-panel-top">${miniWheel(items)}
+    <div class="wheel-panel-text"><h3>🎡 Our wheel</h3><span class="muted small">${srcText}</span>
+      <div class="wheel-chips">${items.map((it) => `<span class="wheel-chip">${escapeHtml(it.title)}${source === 'chosen' ? `<button data-rm="${escapeHtml(it.key)}" aria-label="Take ${escapeHtml(it.title)} off the wheel">✕</button>` : ''}</span>`).join('') || '<span class="muted small">Nothing to spin yet.</span>'}</div></div></div>
+    <div class="wheel-actions">
+      <button class="ghost small" id="wheelEdit">✏️ Choose films</button>
+      ${source === 'chosen' ? '<button class="ghost small" id="wheelClear">↺ Clear</button>' : ''}
+      <span class="spacer"></span>
+      ${calling && live.by === myName() ? `<span class="wheel-live">${watchers.length ? `👀 ${escapeHtml(watchers.join(' & '))} ${watchers.length > 1 ? 'are' : 'is'} watching!` : `📣 Waiting for ${escapeHtml(other)}…`}</span>`
+        : `<button class="ghost small" id="wheelCall" ${items.length < 2 ? 'disabled' : ''}>📣 Call ${escapeHtml(other)} to watch</button>`}
+      <button class="primary ${calling && watchers.length ? 'pulse' : ''}" id="wheelSpin" ${items.length < 2 ? 'disabled' : ''}>🎡 Spin!</button>
+    </div>`;
+  for (const b of el.querySelectorAll('[data-rm]')) b.onclick = () => send({ t: 'wheelSet', keys: fstate.wheelPicks.keys.filter((k) => k !== b.dataset.rm) });
+  $('wheelEdit').onclick = openWheelPicker;
+  if ($('wheelClear')) $('wheelClear').onclick = () => send({ t: 'wheelSet', keys: [] });
+  if ($('wheelCall')) $('wheelCall').onclick = () => { send({ t: 'wheelCall' }); openWheelLobby(); };
+  $('wheelSpin').onclick = () => spinWheel();
+}
+function spinWheel() {
+  const { items } = wheelPool();
+  if (items.length < 2) { toast('Put at least two films on the wheel first.'); return; }
+  send({ t: 'wheel', keys: items.map((x) => x.key) });
+}
+
+// ---- Choosing the films
+let pickerSel = new Set();
+function openWheelPicker() {
+  const all = wheelItems();
+  pickerSel = new Set(((fstate.wheelPicks && fstate.wheelPicks.keys) || wheelPool().items.map((x) => x.key)).filter((k) => all.some((x) => x.key === k)));
+  let sheet = $('wheelPickSheet');
+  if (!sheet) {
+    sheet = document.createElement('div');
+    sheet.id = 'wheelPickSheet';
+    sheet.className = 'modal hidden';
+    sheet.setAttribute('role', 'dialog');
+    sheet.setAttribute('aria-modal', 'true');
+    sheet.setAttribute('aria-label', 'Choose the films for the wheel');
+    document.body.appendChild(sheet);
+    sheet.addEventListener('click', (e) => { if (e.target === sheet) sheet.classList.add('hidden'); });
+  }
+  const draw = () => {
+    const unwatched = all.filter((x) => !x.done);
+    sheet.innerHTML = `<div class="sheet wheel-pick"><header class="sheet-head"><b>🎡 What goes on the wheel?</b><button class="ghost small" id="wpClose" aria-label="Close">✕</button></header>
+      <div class="wp-quick"><span class="muted small">Quick:</span>
+        <button class="ghost small" data-q="matches">💞 Our matches</button><button class="ghost small" data-q="random">🎲 6 random unwatched</button><button class="ghost small" data-q="none">Clear all</button></div>
+      <div class="wp-grid">${all.map((it, i) => `<button class="wp-item ${pickerSel.has(it.key) ? 'on' : ''}" data-i="${i}" aria-pressed="${pickerSel.has(it.key)}">
+        <span class="wp-img" ${it.img ? `style="background-image:url('${it.img}')"` : ''}>${pickerSel.has(it.key) ? '<span class="wp-check">✓</span>' : ''}${it.done ? '<span class="tile-badge">✓ Watched</span>' : ''}</span>
+        <b>${escapeHtml(it.title)}</b><span class="muted small">${escapeHtml(it.sub)}</span></button>`).join('')}</div>
+      <div class="row pad wp-foot"><span class="muted">${pickerSel.size} on the wheel${pickerSel.size > 12 ? ' (max 12)' : pickerSel.size === 2 ? ' · a toss-up!' : ''}</span><span class="spacer"></span>
+        <button class="primary" id="wpDone" ${pickerSel.size < 2 || pickerSel.size > 12 ? 'disabled' : ''}>Put them on the wheel</button></div></div>`;
+    for (const b of sheet.querySelectorAll('.wp-item')) b.onclick = () => { const k = all[Number(b.dataset.i)].key; if (pickerSel.has(k)) pickerSel.delete(k); else pickerSel.add(k); draw(); };
+    for (const b of sheet.querySelectorAll('[data-q]')) b.onclick = () => {
+      if (b.dataset.q === 'none') pickerSel = new Set();
+      if (b.dataset.q === 'random') pickerSel = new Set(unwatched.map((x) => [Math.random(), x.key]).sort((p, q) => p[0] - q[0]).slice(0, 6).map((x) => x[1]));
+      if (b.dataset.q === 'matches') {
+        const me = myName(); const mine = (fstate.votes || {})[me] || {};
+        const others = Object.keys(fstate.votes || {}).filter((n) => n !== me);
+        pickerSel = new Set(all.filter((it) => mine[it.key] === 1 && others.some((n) => (fstate.votes[n] || {})[it.key] === 1)).map((x) => x.key).slice(0, 12));
+        if (!pickerSel.size) toast('No matches yet: swipe ♥ in Pick together first.');
+      }
+      draw();
+    };
+    $('wpClose').onclick = () => sheet.classList.add('hidden');
+    $('wpDone').onclick = () => { send({ t: 'wheelSet', keys: [...pickerSel] }); sheet.classList.add('hidden'); toast(`🎡 ${pickerSel.size} films on the wheel`); };
+  };
+  draw();
+  sheet.classList.remove('hidden');
+}
+
+// ---- Waiting at the wheel together (before the spin)
+let inLobby = false;
+function openWheelLobby() {
+  const { items } = wheelPool();
+  if (items.length < 2) return;
+  inLobby = true;
+  const seg = 360 / items.length;
+  const wheel = $('wheel');
+  wheel.style.transition = 'none';
+  wheel.style.transform = 'rotate(0deg)';
+  wheel.style.background = `conic-gradient(${items.map((p, i) => `${WHEEL_COLORS[i % WHEEL_COLORS.length]} ${i * seg}deg ${(i + 1) * seg}deg`).join(',')})`;
+  $('wheelSheet').classList.remove('hidden');
+  const radius = (wheel.clientWidth || 300) / 2;
+  wheel.innerHTML = items.map((p, i) => `<span class="wheel-label" style="transform: translate(-50%, -50%) rotate(${i * seg + seg / 2}deg) translateY(-${Math.round(radius * 0.58)}px)">${escapeHtml(p.title.slice(0, 16))}</span>`).join('');
+  renderLobby();
+}
+function renderLobby() {
+  if (!inLobby || $('wheelSheet').classList.contains('hidden')) return;
+  const live = wheelLive;
+  if (live && live.phase === 'spinning') { inLobby = false; return; } // the spin takes over
+  const here = live ? live.watchers : [myName()];
+  const others = here.filter((n) => n !== myName());
+  const caller = live && live.by;
+  $('wheelResult').innerHTML = `<div class="lobby">${here.map((n) => `<span class="lobby-person"><span class="avatar">${Art.head(avatarFor({ name: n }))}</span>${escapeHtml(n === myName() ? 'You' : n)}</span>`).join('')}</div>
+    <p class="muted">${!live ? '' : caller === myName() ? (others.length ? `${escapeHtml(others.join(' & '))} ${others.length > 1 ? 'are' : 'is'} here 👀 Spin when you're ready!` : `📣 Called ${escapeHtml(partnerName())}. Waiting for them to come…`)
+      : `${escapeHtml(caller)} is about to spin…`}</p>
+    <div class="row center"><button class="ghost" id="lobbyClose">Close</button><button class="primary" id="lobbySpin">🎡 Spin!</button></div>`;
+  $('lobbyClose').onclick = () => { send({ t: 'wheelLeave' }); inLobby = false; $('wheelSheet').classList.add('hidden'); };
+  $('lobbySpin').onclick = () => spinWheel();
+}
+function comeWatch(by) {
+  // Wherever she is in the app (not mid-movie): a big invitation.
+  if (meta) { toast(`🎡 ${by} wants to spin the wheel. It'll be in Pick together after the movie.`, 6000); return; }
+  let el = $('wheelInvite');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'wheelInvite';
+    el.className = 'modal';
+    el.setAttribute('role', 'alertdialog');
+    document.body.appendChild(el);
+  }
+  const { items } = wheelPool();
+  el.innerHTML = `<div class="sheet invite-card"><div class="invite-wheel">${miniWheel(items)}</div>
+    <h2>🎡 ${escapeHtml(by)} is about to spin the wheel!</h2>
+    <p class="muted">On the wheel: ${escapeHtml(items.map((x) => x.title).join(', '))}</p>
+    <div class="row center"><button class="ghost" id="inviteNo">Not now</button><button class="primary" id="inviteYes">👀 Come watch</button></div></div>`;
+  el.classList.remove('hidden');
+  if (navigator.vibrate) { try { navigator.vibrate([80, 60, 80]); } catch { /* not allowed */ } }
+  $('inviteNo').onclick = () => el.classList.add('hidden');
+  $('inviteYes').onclick = () => { el.classList.add('hidden'); send({ t: 'wheelWatch' }); showTab('pick'); openWheelLobby(); };
+}
+// Live wheel messages arrive through the fun/hub message hook.
+const baseOnHubMessage = onHubMessage;
+onHubMessage = function (m) {
+  if (m.t === 'wheelCall') {
+    wheelLive = { phase: 'calling', by: m.by, watchers: [m.by], at: m.at };
+    if (m.by !== myName()) comeWatch(m.by);
+    renderWheelPanel(); renderLobby();
+    return;
+  }
+  if (m.t === 'wheelLive') {
+    wheelLive = m.live;
+    if (m.joined && m.joined !== myName() && wheelLive && wheelLive.by === myName()) toast(`👀 ${m.joined} is here to watch the spin!`);
+    if (!wheelLive && $('wheelInvite')) $('wheelInvite').classList.add('hidden');
+    renderWheelPanel(); renderLobby();
+    return;
+  }
+  baseOnHubMessage(m);
+};

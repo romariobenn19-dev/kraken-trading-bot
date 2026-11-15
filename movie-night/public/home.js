@@ -382,6 +382,7 @@ function renderPick() {
   const card = todo[0];
   const area = $('pickArea');
   area.innerHTML = `
+    <section id="wheelPanel" class="wheel-panel"></section>
     <div class="pick-head"><h3>Swipe ♥ on what you'd like to watch. When you both ♥ the same one, it's a match.</h3></div>
     <div class="pick-deck">${card ? `
       <div class="swipe-card" id="swipeCard">
@@ -396,7 +397,7 @@ function renderPick() {
       ${matches.length ? `<div class="match-list">${matches.map((m) => `<button class="match" data-key="${escapeHtml(m.key)}"><span class="match-img" ${m.img ? `style="background-image:url('${m.img}')"` : ''}></span><b>${escapeHtml(m.title)}</b><span>▶</span></button>`).join('')}</div>`
         : `<p class="muted small">${others.length ? 'No matches yet. Keep swiping!' : `Waiting for your partner to swipe too.`}</p>`}
       <div class="row">
-        <button class="primary" id="spinBtn" ${(matches.length || items.length) ? '' : 'disabled'}>🎡 Spin the wheel${matches.length >= 2 ? ' (matches)' : ''}</button>
+        ${matches.length >= 2 ? '<button class="ghost small" id="matchesToWheel">🎡 Put our matches on the wheel</button>' : ''}
         <span class="spacer"></span>
         <button class="ghost small" id="resetVotes">Start over</button>
       </div>
@@ -408,12 +409,8 @@ function renderPick() {
     enableSwipe($('swipeCard'), vote);
   }
   for (const b of area.querySelectorAll('.match')) b.onclick = () => { const it = items.find((x) => x.key === b.dataset.key); if (it) play(it.play); };
-  $('spinBtn').onclick = () => {
-    const pool = (matches.length >= 2 ? matches : items).slice(0, 12);
-    if (!pool.length) return;
-    const winner = pool[Math.floor(Math.random() * pool.length)];
-    send({ t: 'wheel', key: winner.key, keys: pool.map((p) => p.key) });
-  };
+  if ($('matchesToWheel')) $('matchesToWheel').onclick = () => { send({ t: 'wheelSet', keys: matches.slice(0, 12).map((m) => m.key) }); toast('🎡 Your matches are on the wheel'); };
+  if (typeof renderWheelPanel === 'function') renderWheelPanel();
   $('resetVotes').onclick = () => { if (confirm('Clear both of your swipes and start over?')) send({ t: 'votesReset' }); };
 }
 function animateSwipe(v, done) {
@@ -445,7 +442,7 @@ function enableSwipe(el, vote) {
 
 // The wheel spins on both screens and lands on the same pick.
 function showWheel(m) {
-  const items = candidates();
+  const items = typeof wheelItems === 'function' ? wheelItems() : candidates();
   const pool = m.keys.map((k) => items.find((i) => i.key === k)).filter(Boolean);
   const winnerIdx = pool.findIndex((p) => p.key === m.key);
   if (winnerIdx < 0 || !pool.length) return;
@@ -458,7 +455,8 @@ function showWheel(m) {
   $('wheelSheet').classList.remove('hidden');
   const radius = (wheel.clientWidth || 300) / 2;
   wheel.innerHTML = pool.map((p, i) => `<span class="wheel-label" style="transform: translate(-50%, -50%) rotate(${i * seg + seg / 2}deg) translateY(-${Math.round(radius * 0.58)}px)">${escapeHtml(p.title.slice(0, 16))}</span>`).join('');
-  $('wheelResult').innerHTML = `<p class="muted">${escapeHtml(m.by)} spun the wheel…</p>`;
+  const watching = (m.watchers || []).filter((n) => n !== m.by);
+  $('wheelResult').innerHTML = `<p class="muted">${escapeHtml(m.by === myName() ? 'You' : m.by)} spun the wheel…${watching.length ? ` 👀 ${escapeHtml(watching.map((n) => (n === myName() ? 'you' : n)).join(' & '))} watching` : ''}</p>`;
   $('wheelSheet').classList.remove('hidden');
   const target = 360 * 6 + (360 - (winnerIdx * seg + seg / 2));
   requestAnimationFrame(() => requestAnimationFrame(() => {

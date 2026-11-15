@@ -77,7 +77,9 @@ If Windows says *"Windows protected your PC"*, click **More info**, then **Run a
 
 **📖 Our diary:** after each movie you're both asked for your review. Each movie becomes a scrapbook page with your ratings, quotes, love notes and snapshots, plus stats: movies together, hours together, each of your favourites.
 
-**🎲 Pick together:** swipe ♥ or ✗ on what you haven't watched. When you both ♥ the same one it's a match. **Spin the wheel** spins on both screens and lands on the same pick.
+**🎲 Pick together:** swipe ♥ or ✗ on what you haven't watched. When you both ♥ the same one it's a match.
+
+**🎡 Our wheel** (top of Pick together): tap **✏️ Choose films** and pick exactly what goes on it, from two films for a toss-up up to 12 (quick buttons: your matches, or 6 random unwatched). Either of you can change it, and you both see the same wheel. **📣 Call Maria to watch** sends her a notification and pops up "Romario is about to spin the wheel!" wherever she is in the app; she taps **👀 Come watch** and you see "Maria is here 👀". Then **Spin!**: it spins on both screens and lands on the same film (the laptop picks it, fairly).
 
 **📅 Movie-night countdown:** plan the next one; the home screen shows the countdown and the time for each of you (e.g. 3:00 PM yours, 9:00 PM hers).
 
