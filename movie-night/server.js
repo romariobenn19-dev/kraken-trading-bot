@@ -389,6 +389,7 @@ function handle(ws, c, msg) {
       c.role = c.isHost || msg.role === 'host' ? 'host' : 'guest';
       c.hevc = typeof msg.hevc === 'boolean' ? msg.hevc : null;
       rememberDevice(c, msg.deviceId);
+      learnWhoIsWho(c);
       // One of you at a time: a newer window/browser/device takes over from the older one.
       for (const [otherWs, other] of clients) {
         if (otherWs !== ws && other.name.trim().toLowerCase() === c.name.trim().toLowerCase()) {
@@ -692,12 +693,29 @@ function personal() {
     photos = fs.readdirSync(PHOTOS).filter((f) => PHOTO_EXT.has(path.extname(f).toLowerCase()))
       .sort().slice(0, 40).map((f) => `/personal/photos/${encodeURIComponent(f)}`);
   } catch { /* no photos yet */ }
-  return { him: p.him || '', her: p.her || '', dog: p.dog || '', since: p.since || '', nights: p.nights || 0, photos };
+  return { him: p.him || '', her: p.her || '', himLogin: p.himLogin || '', herLogin: p.herLogin || '', dog: p.dog || '', since: p.since || '', nights: p.nights || 0, photos };
+}
+
+/**
+ * Who is who: whoever signs in on the laptop is "him", the other person is "her", so the
+ * pet names in Personalize (Daddy & Dolly…) go with the right sign-in names.
+ */
+function learnWhoIsWho(c) {
+  const p = config.personal || (config.personal = {});
+  const n = String(c.name || '').trim();
+  if (!n || /^(host|guest)$/i.test(n)) return;
+  const same = (a, b) => String(a || '').toLowerCase() === n.toLowerCase();
+  if (same(p.himLogin) || same(p.herLogin)) return;
+  if (c.role === 'host' && !p.himLogin) p.himLogin = n;
+  else if (!p.herLogin && (c.role !== 'host' || p.himLogin)) p.herLogin = n; // her device, or the second person to join
+  else return;
+  saveConfig();
+  broadcast({ t: 'personal' });
 }
 
 function savePersonal(body) {
   const p = config.personal || (config.personal = {});
-  for (const k of ['him', 'her', 'dog']) if (typeof body[k] === 'string') p[k] = body[k].trim().slice(0, 30);
+  for (const k of ['him', 'her', 'dog', 'himLogin', 'herLogin']) if (typeof body[k] === 'string') p[k] = body[k].trim().slice(0, 30);
   if (typeof body.since === 'string' && /^(\d{4}-\d{2}-\d{2})?$/.test(body.since)) p.since = body.since;
   saveConfig();
   broadcast({ t: 'personal' });

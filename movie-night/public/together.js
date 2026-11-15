@@ -12,11 +12,11 @@ function onFeatureMessage(m) {
     case 'countdown': showCurtains(m.at); break;
     case 'nextUp': showNextUp(m); break;
     case 'rateMe': openRateCard(m.entryId, m.title, m.movieId); break;
-    case 'snap': flash(); toast(`📸 ${m.by === myName() ? 'You' : m.by} saved a moment to your diary`); break;
+    case 'snap': flash(); toast(`📸 ${m.by === myName() ? 'You' : petName(m.by)} saved a moment to your diary`); break;
     case 'wheel': if (!meta) { showTab('pick'); showWheel(m); } break;
     case 'wantAck': toast(m.by === myName()
       ? `⏳ Getting "${m.title}" ready. It'll open on both screens in about a minute.`
-      : `⏳ ${m.by} picked "${m.title}". It'll open on both screens in about a minute.`, 7000); break;
+      : `⏳ ${petName(m.by)} picked "${m.title}". It'll open on both screens in about a minute.`, 7000); break;
     default: if (typeof onFunMessage === 'function') onFunMessage(m);
   }
 }
@@ -63,7 +63,7 @@ function showChat(m) {
   const el = document.createElement('div');
   el.className = `chat-msg ${m.from === myName() ? 'mine' : ''}`;
   el.innerHTML = `<span class="avatar">${Art.head(avatarFor({ name: m.from }))}</span><span class="chat-bubble"><b></b><span></span></span>`;
-  el.querySelector('b').textContent = m.from;
+  el.querySelector('b').textContent = petName(m.from);
   el.querySelector('.chat-bubble span').textContent = m.text;
   log.appendChild(el);
   while (log.children.length > 4) log.firstChild.remove();
@@ -90,7 +90,7 @@ function onCuddle(m) {
     clearInterval(heartTimer); heartTimer = null;
     if (others.length && !m.holders.includes(me) && Date.now() - cuddleHintAt > 8000) {
       cuddleHintAt = Date.now();
-      toast(`🤗 ${others[0]} wants a cuddle. Hold 🤗 too!`);
+      toast(`🤗 ${petName(others[0])} wants a cuddle. Hold 🤗 too!`);
     }
   }
 }
@@ -134,7 +134,7 @@ function checkNotes() {
   store.set('mn_notesSeen', JSON.stringify([...seen].slice(-500)));
   const el = $('noteToast');
   el.innerHTML = `<div class="note-env">💌</div><div><span class="muted small">A love note from</span> <b></b><p></p></div>`;
-  el.querySelector('b').textContent = due.from;
+  el.querySelector('b').textContent = petName(due.from);
   el.querySelector('p').textContent = due.text;
   el.classList.remove('hidden');
   clearTimeout(el._t);

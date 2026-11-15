@@ -955,3 +955,4 @@ blockquote.pull { margin: 0; padding: 4px 0 4px 14px; border-left: 4px solid var
 .lobby-person .avatar { width: 34px; height: 34px; }
 .row.center { justify-content: center; }
 @media (max-width: 520px) { .wheel-panel-top { align-items: flex-start; } .mini-wheel { width: 70px; height: 70px; } }
+#settings select { width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; color: var(--text); font: inherit; }

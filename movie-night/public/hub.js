@@ -5,7 +5,7 @@
 'use strict';
 
 const me = () => myName();
-const nameOrYou = (n) => (n === me() ? 'You' : n);
+const nameOrYou = (n) => (n === me() ? 'You' : petName(n));
 function ago(ts) {
   const s = Math.max(0, (Date.now() - ts) / 1000);
   if (s < 60) return 'just now';
@@ -17,18 +17,16 @@ function ago(ts) {
 const avatarHtml = (n) => (n ? `<span class="avatar">${Art.head(avatarFor({ name: n }))}</span>` : '<span class="avatar heart-av">💞</span>');
 /** The two of you: names seen anywhere (you first). */
 function couple() {
-  const names = new Set([me()]);
+  // The sign-in names from Personalize (e.g. "Romario Benn" and "Jelina"), you first.
+  const logins = [personalInfo.himLogin, personalInfo.herLogin].filter(Boolean);
+  const names = new Set([me(), ...logins]);
   for (const n of Object.keys(fstate.people || {})) names.add(n);
   for (const e of fstate.diary || []) for (const n of Object.keys(e.ratings)) names.add(n);
-  if (personalInfo.him) names.add(personalInfo.him);
-  if (personalInfo.her) names.add(personalInfo.her);
   const list = [...names].filter(Boolean);
-  // Prefer the names from Personalize when they're set.
-  const pref = [personalInfo.him, personalInfo.her].filter((n) => n && list.some((x) => x.toLowerCase() === n.toLowerCase()));
-  const two = pref.length === 2 ? pref : list.slice(0, 2);
+  const two = logins.length === 2 ? logins : list.slice(0, 2);
   return two.sort((a, b) => (a === me() ? -1 : b === me() ? 1 : 0));
 }
-const partnerName = () => couple().find((n) => n !== me()) || 'your love';
+const partnerName = () => petName(couple().find((n) => n !== me()) || '') || 'your love';
 
 // =================================================================================
 // Together dashboard
@@ -226,7 +224,7 @@ function dailyCard() {
   const others = Object.entries(t.answers).filter(([n]) => n !== me());
   let body;
   if (!mine) {
-    body = `${others.length ? `<p class="muted small">💌 ${escapeHtml(others[0][0])} already answered. Answer to see theirs!</p>` : ''}
+    body = `${others.length ? `<p class="muted small">💌 ${escapeHtml(petName(others[0][0]))} already answered. Answer to see theirs!</p>` : ''}
       <form id="dailyForm" class="side-form"><textarea id="dailyText" rows="2" maxlength="300" placeholder="Your answer…"></textarea><button class="primary small" type="submit">Answer</button></form>`;
   } else if (!others.length || others[0][1].sealed) {
     body = `<div class="answer mine">${avatarHtml(me())}<p></p></div><p class="muted small">🔒 Sealed. You'll both see the answers once ${escapeHtml(partnerName())} answers.</p>`;
@@ -385,7 +383,7 @@ function profilesCard() {
       ['😊', 'Go-to reaction', s.topReact ? `${s.topReact} (${s.reacts})` : '–'],
       ['🧠', 'Quiz wins', s.quiz], ['🎯', 'Bingos', s.bingo], ['🧩', 'Puzzles solved', s.puzzles], ['💌', 'Love notes', s.notes],
     ];
-    return `<div class="profile"><div class="profile-head">${avatarHtml(n)}<b>${escapeHtml(n)}</b></div>${rows.map(([i, l, v]) => `<div class="stat-row"><span>${i} ${l}</span><b>${escapeHtml(String(v))}</b></div>`).join('')}</div>`;
+    return `<div class="profile"><div class="profile-head">${avatarHtml(n)}<b>${escapeHtml(petName(n))}</b></div>${rows.map(([i, l, v]) => `<div class="stat-row"><span>${i} ${l}</span><b>${escapeHtml(String(v))}</b></div>`).join('')}</div>`;
   }).join('')}</div></section>`;
 }
 
@@ -459,7 +457,7 @@ function renderWheelPanel() {
   const live = wheelLive || fstate.wheelLive;
   const calling = live && live.phase === 'calling';
   const watchers = live ? live.watchers.filter((n) => n !== myName()) : [];
-  const srcText = source === 'chosen' ? `Chosen by ${escapeHtml(fstate.wheelPicks.by === myName() ? 'you' : fstate.wheelPicks.by)}`
+  const srcText = source === 'chosen' ? `Chosen by ${escapeHtml(fstate.wheelPicks.by === myName() ? 'you' : petName(fstate.wheelPicks.by))}`
     : source === 'matches' ? 'Your matches (choose your own with ✏️)' : 'What you haven\'t watched (choose your own with ✏️)';
   el.innerHTML = `<div class="wheel-panel-top">${miniWheel(items)}
     <div class="wheel-panel-text"><h3>🎡 Our wheel</h3><span class="muted small">${srcText}</span>
@@ -468,7 +466,7 @@ function renderWheelPanel() {
       <button class="ghost small" id="wheelEdit">✏️ Choose films</button>
       ${source === 'chosen' ? '<button class="ghost small" id="wheelClear">↺ Clear</button>' : ''}
       <span class="spacer"></span>
-      ${calling && live.by === myName() ? `<span class="wheel-live">${watchers.length ? `👀 ${escapeHtml(watchers.join(' & '))} ${watchers.length > 1 ? 'are' : 'is'} watching!` : `📣 Waiting for ${escapeHtml(other)}…`}</span>`
+      ${calling && live.by === myName() ? `<span class="wheel-live">${watchers.length ? `👀 ${escapeHtml(watchers.map(petName).join(' & '))} ${watchers.length > 1 ? 'are' : 'is'} watching!` : `📣 Waiting for ${escapeHtml(other)}…`}</span>`
         : `<button class="ghost small" id="wheelCall" ${items.length < 2 ? 'disabled' : ''}>📣 Call ${escapeHtml(other)} to watch</button>`}
       <button class="primary ${calling && watchers.length ? 'pulse' : ''}" id="wheelSpin" ${items.length < 2 ? 'disabled' : ''}>🎡 Spin!</button>
     </div>`;
@@ -552,16 +550,16 @@ function renderLobby() {
   const here = live ? live.watchers : [myName()];
   const others = here.filter((n) => n !== myName());
   const caller = live && live.by;
-  $('wheelResult').innerHTML = `<div class="lobby">${here.map((n) => `<span class="lobby-person"><span class="avatar">${Art.head(avatarFor({ name: n }))}</span>${escapeHtml(n === myName() ? 'You' : n)}</span>`).join('')}</div>
-    <p class="muted">${!live ? '' : caller === myName() ? (others.length ? `${escapeHtml(others.join(' & '))} ${others.length > 1 ? 'are' : 'is'} here 👀 Spin when you're ready!` : `📣 Called ${escapeHtml(partnerName())}. Waiting for them to come…`)
-      : `${escapeHtml(caller)} is about to spin…`}</p>
+  $('wheelResult').innerHTML = `<div class="lobby">${here.map((n) => `<span class="lobby-person"><span class="avatar">${Art.head(avatarFor({ name: n }))}</span>${escapeHtml(n === myName() ? 'You' : petName(n))}</span>`).join('')}</div>
+    <p class="muted">${!live ? '' : caller === myName() ? (others.length ? `${escapeHtml(others.map(petName).join(' & '))} ${others.length > 1 ? 'are' : 'is'} here 👀 Spin when you're ready!` : `📣 Called ${escapeHtml(partnerName())}. Waiting for them to come…`)
+      : `${escapeHtml(petName(caller))} is about to spin…`}</p>
     <div class="row center"><button class="ghost" id="lobbyClose">Close</button><button class="primary" id="lobbySpin">🎡 Spin!</button></div>`;
   $('lobbyClose').onclick = () => { send({ t: 'wheelLeave' }); inLobby = false; $('wheelSheet').classList.add('hidden'); };
   $('lobbySpin').onclick = () => spinWheel();
 }
 function comeWatch(by) {
   // Wherever she is in the app (not mid-movie): a big invitation.
-  if (meta) { toast(`🎡 ${by} wants to spin the wheel. It'll be in Pick together after the movie.`, 6000); return; }
+  if (meta) { toast(`🎡 ${petName(by)} wants to spin the wheel. It'll be in Pick together after the movie.`, 6000); return; }
   let el = $('wheelInvite');
   if (!el) {
     el = document.createElement('div');
@@ -572,7 +570,7 @@ function comeWatch(by) {
   }
   const { items } = wheelPool();
   el.innerHTML = `<div class="sheet invite-card"><div class="invite-wheel">${miniWheel(items)}</div>
-    <h2>🎡 ${escapeHtml(by)} is about to spin the wheel!</h2>
+    <h2>🎡 ${escapeHtml(petName(by))} is about to spin the wheel!</h2>
     <p class="muted">On the wheel: ${escapeHtml(items.map((x) => x.title).join(', '))}</p>
     <div class="row center"><button class="ghost" id="inviteNo">Not now</button><button class="primary" id="inviteYes">👀 Come watch</button></div></div>`;
   el.classList.remove('hidden');
@@ -591,7 +589,7 @@ onHubMessage = function (m) {
   }
   if (m.t === 'wheelLive') {
     wheelLive = m.live;
-    if (m.joined && m.joined !== myName() && wheelLive && wheelLive.by === myName()) toast(`👀 ${m.joined} is here to watch the spin!`);
+    if (m.joined && m.joined !== myName() && wheelLive && wheelLive.by === myName()) toast(`👀 ${petName(m.joined)} is here to watch the spin!`);
     if (!wheelLive && $('wheelInvite')) $('wheelInvite').classList.add('hidden');
     renderWheelPanel(); renderLobby();
     return;

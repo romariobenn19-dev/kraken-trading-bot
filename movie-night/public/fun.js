@@ -126,7 +126,7 @@ video.addEventListener('timeupdate', () => {
     // Reactions from an earlier viewing of this movie pop up at the same moment.
     const old = (fstate.reactions || []).filter((r) => r.movieId === meta.id && r.at < sessionStart - 30 * 60000 && r.t > lastCt && r.t <= ct);
     for (const r of old.slice(0, 2)) {
-      floatEmoji(r.key, `${r.by === myName() ? 'You' : r.by} · last time`);
+      floatEmoji(r.key, `${r.by === myName() ? 'You' : petName(r.by)} · last time`);
       const f = $('floaters').lastElementChild;
       if (f) f.classList.add('replay');
     }
@@ -140,7 +140,7 @@ function showLips(from) {
   el.style.top = `${15 + Math.random() * 45}%`;
   el.style.transform = `rotate(${Math.round(Math.random() * 40 - 20)}deg)`;
   el.innerHTML = `${Art.lips()}<small></small>`;
-  el.querySelector('small').textContent = from === myName() ? 'You sent a kiss' : `A kiss from ${from}`;
+  el.querySelector('small').textContent = from === myName() ? 'You sent a kiss' : `A kiss from ${petName(from)}`;
   (meta ? $('lipsLayer') : document.body).appendChild(el);
   setTimeout(() => el.remove(), 4200);
 }
@@ -183,7 +183,7 @@ function renderSnackBreak() {
     $('snackMore').onclick = (e) => { e.stopPropagation(); send({ t: 'intermissionMore' }); };
     $('snackEnd').onclick = (e) => { e.stopPropagation(); send({ t: 'intermissionEnd' }); };
   }
-  $('snackBy').textContent = `${im.by === myName() ? 'You' : im.by} called a break. Grab snacks, the movie carries on together when the timer ends.`;
+  $('snackBy').textContent = `${im.by === myName() ? 'You' : petName(im.by)} called a break. Grab snacks, the movie carries on together when the timer ends.`;
   const tick = () => {
     const left = Math.max(0, Math.ceil(((state.intermission ? state.intermission.until : 0) - serverNow()) / 1000));
     const t = $('snackTime');
@@ -354,7 +354,7 @@ function predictionsHtml(movieId) {
   const shown = Object.entries(preds).filter(([, p]) => p.revealed);
   if (!shown.length) return '';
   return `<div class="preds"><div class="field-title">🔮 Your predictions</div>${shown.map(([n, p]) => `<div class="pred"><span class="avatar">${Art.head(avatarFor({ name: n }))}</span>
-    <span><b>${escapeHtml(n)}</b>${p.stars ? ` guessed <span class="stars">${'★'.repeat(p.stars)}</span>` : ''}${p.text ? `<br><q>${escapeHtml(p.text)}</q>` : ''}</span></div>`).join('')}</div>`;
+    <span><b>${escapeHtml(petName(n))}</b>${p.stars ? ` guessed <span class="stars">${'★'.repeat(p.stars)}</span>` : ''}${p.text ? `<br><q>${escapeHtml(p.text)}</q>` : ''}</span></div>`).join('')}</div>`;
 }
 let nudgeTimer = null;
 function maybeNudgePrediction() {
@@ -379,10 +379,10 @@ function onQuiz(m) {
   const body = $('quizBody');
   if (m.phase === 'none') { toast(m.title ? `"${m.title}" has no subtitles to make a quiz from. Add some with CC+ on the laptop.` : 'No subtitles to make a quiz from.', 6000); return; }
   if (m.phase === 'busy') { toast('A quiz is already running.'); $('quizSheet').classList.remove('hidden'); return; }
-  if (m.phase === 'stop') { $('quizSheet').classList.add('hidden'); quiz = null; toast(`${m.by === myName() ? 'You' : m.by} ended the quiz.`); return; }
+  if (m.phase === 'stop') { $('quizSheet').classList.add('hidden'); quiz = null; toast(`${m.by === myName() ? 'You' : petName(m.by)} ended the quiz.`); return; }
   if (m.phase === 'q') {
     quiz = { id: m.id, i: m.i, n: m.n, q: m.q, title: m.title || (quiz && quiz.title), endsAt: m.endsAt, mine: null, scores: m.scores };
-    const scores = Object.entries(m.scores || {}).map(([n, v]) => `<span class="qscore"><span class="avatar">${Art.head(avatarFor({ name: n }))}</span>${escapeHtml(n)} <b>${v}</b></span>`).join('');
+    const scores = Object.entries(m.scores || {}).map(([n, v]) => `<span class="qscore"><span class="avatar">${Art.head(avatarFor({ name: n }))}</span>${escapeHtml(petName(n))} <b>${v}</b></span>`).join('');
     body.innerHTML = `<header class="sheet-head"><b>🎬 Quote quiz</b><button class="ghost small" id="quizClose" aria-label="Close">✕</button></header>
       <div class="quiz-main">
         <div class="muted small">${escapeHtml(quiz.title || '')} · question ${m.i + 1} of ${m.n}</div>
@@ -417,7 +417,7 @@ function onQuiz(m) {
   if (!quiz || m.id !== quiz.id) return;
   if (m.phase === 'answered') {
     const others = m.who.filter((n) => n !== myName());
-    $('quizWho').textContent = others.length ? `✓ ${others.join(' & ')} answered` : '';
+    $('quizWho').textContent = others.length ? `✓ ${others.map(petName).join(' & ')} answered` : '';
   }
   if (m.phase === 'reveal') {
     quiz.i = -1; // stops the timer bar
@@ -434,11 +434,11 @@ function onQuiz(m) {
   if (m.phase === 'end') {
     const entries = Object.entries(m.scores).sort((a, b) => b[1] - a[1]);
     const headline = !m.winners.length ? 'Nobody scored. Rewatch time? 😄'
-      : m.winners.length > 1 ? `It's a tie! ${m.winners.join(' & ')} 💞` : `🏆 ${m.winners[0] === myName() ? 'You win' : `${m.winners[0]} wins`}!`;
+      : m.winners.length > 1 ? `It's a tie! ${m.winners.map(petName).join(' & ')} 💞` : `🏆 ${m.winners[0] === myName() ? 'You win' : `${petName(m.winners[0])} wins`}!`;
     body.innerHTML = `<header class="sheet-head"><b>🎬 Quote quiz</b><button class="ghost small" id="quizClose" aria-label="Close">✕</button></header>
       <div class="quiz-main quiz-end"><div class="quiz-art">${Art.couple(m.winners.length ? 'laugh' : 'smile', ['party'])}</div>
         <h2>${escapeHtml(headline)}</h2>
-        <div class="quiz-scores big">${entries.map(([n, v]) => `<span class="qscore"><span class="avatar">${Art.head(avatarFor({ name: n }))}</span>${escapeHtml(n)} <b>${v}/${m.n}</b></span>`).join('')}</div>
+        <div class="quiz-scores big">${entries.map(([n, v]) => `<span class="qscore"><span class="avatar">${Art.head(avatarFor({ name: n }))}</span>${escapeHtml(petName(n))} <b>${v}/${m.n}</b></span>`).join('')}</div>
         <p class="muted small">Saved to your diary.</p>
         <button class="primary" id="quizDone">Close</button></div>`;
     $('quizClose').onclick = closeQuizSheet;
@@ -525,7 +525,7 @@ function renderBingo() {
     return;
   }
   el.innerHTML = `<div class="bingo-head"><b>🎯 Movie bingo</b>
-      <span class="muted small">${others.map(([n, cells]) => `${escapeHtml(n)}: ${cells.length} marked`).join(' · ') || 'Tap a square when it happens'}</span>
+      <span class="muted small">${others.map(([n, cells]) => `${escapeHtml(petName(n))}: ${cells.length} marked`).join(' · ') || 'Tap a square when it happens'}</span>
       <button class="ghost small" id="bingoMin" aria-label="Hide bingo card">–</button></div>
     <div class="bingo-grid">${bingo.card.map((t, i) => `<button class="bingo-cell ${bingo.mine.has(i) ? 'on' : ''}" data-i="${i}"></button>`).join('')}</div>
     <div class="row"><button class="ghost small" id="bingoNew">New cards</button></div>`;
@@ -545,10 +545,10 @@ function renderBingo() {
 function onBingo(m) {
   if (m.phase === 'start') {
     loadBingo(m);
-    if (m.by !== myName()) toast(`🎯 ${m.by} dealt bingo cards! Tap a square when it happens.`);
+    if (m.by !== myName()) toast(`🎯 ${petName(m.by)} dealt bingo cards! Tap a square when it happens.`);
   } else if (m.phase === 'marks' && bingo && m.id === bingo.id) { bingo.marks = m.marks; renderBingo(); }
   else if (m.phase === 'win' && bingo && m.id === bingo.id) {
-    celebrate(m.by === myName() ? '🎯 BINGO! You got a line!' : `🎯 BINGO! ${m.by} got a line!`);
+    celebrate(m.by === myName() ? '🎯 BINGO! You got a line!' : `🎯 BINGO! ${petName(m.by)} got a line!`);
   } else if (m.phase === 'end') loadBingo(null);
 }
 
@@ -585,13 +585,13 @@ function renderKisses() {
     if (n) n.remove();
   }
   $('kissPeople').innerHTML = people.map((n) => `<div class="kiss-person ${(k.counts[n] || 0) >= k.need ? 'done' : ''}">${`<span class="avatar">${Art.head(avatarFor({ name: n }))}</span>`}
-    <b>${escapeHtml(n === myName() ? 'You' : n)}</b><span class="kiss-lips">${lipsRow(k.counts[n] || 0)}</span></div>`).join('');
+    <b>${escapeHtml(n === myName() ? 'You' : petName(n))}</b><span class="kiss-lips">${lipsRow(k.counts[n] || 0)}</span></div>`).join('');
   const btn = $('kissBtn');
   btn.disabled = mine >= k.need;
   btn.innerHTML = mine >= k.need ? 'Kisses sent 💕' : `💋 Blow a kiss <small>${mine + 1} of ${k.need}</small>`;
   $('kissStatus').textContent = mine < k.need
-    ? (others.length ? `Tap three times. Each one lands on ${others.join(' & ')}'s screen.` : 'Tap three times. Then the movie starts.')
-    : waitingFor.length ? `Waiting for ${waitingFor.join(' & ')}'s kisses…` : '';
+    ? (others.length ? `Tap three times. Each one lands on ${others.map(petName).join(' & ')}'s screen.` : 'Tap three times. Then the movie starts.')
+    : waitingFor.length ? `Waiting for ${waitingFor.map(petName).join(' & ')}'s kisses…` : '';
 }
 /** A kiss flies: yours floats away up the screen, theirs lands on yours. */
 function flyKiss(from, n) {
@@ -600,7 +600,7 @@ function flyKiss(from, n) {
   el.className = `flying-kiss ${mineK ? 'out' : 'in'}`;
   el.style.left = `${mineK ? 50 : 20 + Math.random() * 60}%`;
   el.style.setProperty('--tilt', `${Math.round(Math.random() * 30 - 15)}deg`);
-  el.innerHTML = `${Art.lips()}<small>${mineK ? `Kiss ${n} sent` : `💋 from ${escapeHtml(from)}`}</small>`;
+  el.innerHTML = `${Art.lips()}<small>${mineK ? `Kiss ${n} sent` : `💋 from ${escapeHtml(petName(from))}`}</small>`;
   ($('kisses').classList.contains('hidden') ? $('stage') : $('kisses')).appendChild(el);
   setTimeout(() => el.remove(), 2600);
   if (navigator.vibrate && !mineK) { try { navigator.vibrate(60); } catch { /* not allowed */ } }
@@ -612,7 +612,7 @@ function kissesDone(m) {
   const card = el.querySelector('.kiss-card');
   if (card) {
     card.innerHTML = `<div class="kiss-art">${Art.couple('love', [])}</div>
-      <h2>${m.skippedBy ? `${escapeHtml(m.skippedBy === myName() ? 'You' : m.skippedBy)} started the movie 🍿` : '💞 Enjoy the movie!'}</h2>
+      <h2>${m.skippedBy ? `${escapeHtml(m.skippedBy === myName() ? 'You' : petName(m.skippedBy))} started the movie 🍿` : '💞 Enjoy the movie!'}</h2>
       <p class="muted">${m.skippedBy ? 'Kisses still count later 😘' : 'Six kisses sent. Now, popcorn.'}</p>`;
   }
   if (!m.skippedBy) burstHearts(30);
@@ -982,7 +982,7 @@ function renderWishlist() {
   el.innerHTML = `<h3 class="row-title">Our wishlist 🌟</h3>
     <form id="wishForm" class="wish-form" autocomplete="off"><input id="wishInput" maxlength="100" placeholder="A movie you'd love to watch together…" aria-label="Movie wish"><button class="primary small" type="submit">Add</button></form>
     <div class="wish-list">${list.map((w) => `<div class="wish ${w.done ? 'done' : ''}"><span class="avatar">${Art.head(avatarFor({ name: w.by }))}</span>
-      <span class="wish-text"><b></b><span class="muted small">${escapeHtml(w.by)}${w.done ? ' · ✓ added to Movie Night' : ' wishes for this'}</span></span>
+      <span class="wish-text"><b></b><span class="muted small">${escapeHtml(petName(w.by))}${w.done ? ' · ✓ added to Movie Night' : ' wishes for this'}</span></span>
       ${isHost ? `<button class="ghost small" data-wdone="${w.id}">${w.done ? 'Undo' : '✓ Got it'}</button>` : ''}
       ${w.by === myName() || isHost ? `<button class="ghost small" data-wdel="${w.id}" aria-label="Remove">✕</button>` : ''}</div>`).join('')
       || '<p class="muted small">Add movies you want to watch. The laptop gets a little note, and it\'s ticked off when the movie arrives.</p>'}</div>`;
@@ -1014,7 +1014,7 @@ function onFunMessage(m) {
       else if (m.kind === 'clear') clearDoodle();
       else if (m.kind === 'close') closeDoodle();
       break;
-    case 'predicted': if (m.by !== myName()) toast(`🔮 ${m.by} sealed a secret prediction`); break;
+    case 'predicted': if (m.by !== myName()) toast(`🔮 ${petName(m.by)} sealed a secret prediction`); break;
     case 'kissBlown': flyKiss(m.from, m.n); break;
     case 'kissesDone': kissesDone(m); break;
     default: if (typeof onHubMessage === 'function') onHubMessage(m);

@@ -725,7 +725,7 @@ function floatEmoji(key, from) {
   else { face.textContent = (typeof FALLBACK_REACTS !== 'undefined' && FALLBACK_REACTS[key]) || key; face.style.cssText = 'font-size:52px;display:grid;place-items:center'; }
   el.appendChild(face);
   const s = document.createElement('small');
-  s.textContent = from;
+  s.textContent = petName(from);
   el.appendChild(s);
   $('floaters').appendChild(el);
   setTimeout(() => el.remove(), 3100);
@@ -761,7 +761,7 @@ $('stage').addEventListener('pointermove', (e) => { if (e.pointerType === 'mouse
 function renderPeers() {
   const html = peers.map((p) => {
     const health = p.full || p.buffer >= 20 ? '' : p.buffer >= 5 ? 'warn' : 'bad';
-    const parts = [escapeHtml(p.name)];
+    const parts = [escapeHtml(petName(p.name))];
     if (meta && p.ready) {
       if (p.quality) parts.push(p.quality);
       if (!p.quality && !p.full) parts.push('loading…');
@@ -782,7 +782,7 @@ function renderHold() {
   el.classList.remove('hidden');
   const need = state.hold.reason === 'starting' ? state.startBuffer : state.resumeTarget;
   const needFor = (p) => (state.hold.reason === 'starting' && p.shaky ? Math.max(need, 45) : need);
-  const who = (state.hold.who || []).join(' & ');
+  const who = (state.hold.who || []).map(petName).join(' & ');
   const pup = personalInfo.dog || 'The pup';
   const conv = convertedUpTo();
   if (Number.isFinite(conv) && conv - expectedPos() < 12) {
@@ -799,7 +799,7 @@ function renderHold() {
     else if (p.late) note = 'still loading, will catch up';
     const pct = p.full ? 100 : Math.min(100, (p.buffer / needFor(p)) * 100);
     return `<div class="hold-peer"><span class="avatar">${Art.head(avatarFor(p))}</span><div class="hold-peer-main">
-      <div class="hold-peer-top"><b>${escapeHtml(p.name)}</b><span class="muted">${note ? escapeHtml(note) : p.quality || ''}</span></div>
+      <div class="hold-peer-top"><b>${escapeHtml(petName(p.name))}</b><span class="muted">${note ? escapeHtml(note) : p.quality || ''}</span></div>
       ${note ? '' : `<div class="meter"><i style="width:${pct.toFixed(0)}%"></i></div>`}</div></div>`;
   }).join('');
   const waitingOnOthers = (state.hold.who || []).some((n) => n !== store.get('mn_name'));
@@ -1083,7 +1083,23 @@ function toast(text, ms = 4000) {
 }
 
 // ---- Personal touches -----------------------------------------------------------
-let personalInfo = { him: '', her: '', dog: '', since: '', nights: 0, photos: [] };
+let personalInfo = { him: '', her: '', himLogin: '', herLogin: '', dog: '', since: '', nights: 0, photos: [] };
+/** 'him' | 'her' | null for a sign-in name (or a pet name). */
+function whoIs(name) {
+  const n = String(name || '').trim().toLowerCase();
+  if (!n) return null;
+  const eq = (x) => x && String(x).trim().toLowerCase() === n;
+  if (eq(personalInfo.himLogin)) return 'him';
+  if (eq(personalInfo.herLogin)) return 'her';
+  if (eq(personalInfo.him)) return 'him';
+  if (eq(personalInfo.her)) return 'her';
+  return null;
+}
+/** The pet name from Personalize for this person, else the name they signed in with. */
+function petName(name) {
+  const w = whoIs(name);
+  return (w === 'him' && personalInfo.him) || (w === 'her' && personalInfo.her) || name;
+}
 
 const CAPTIONS = { cinema: 'Popcorn date', space: 'Lost in space', horror: 'Scary movie night', heroes: 'Superhero duo', romance: 'Under the stars', pirates: 'Pirates of the sofa' };
 const TILTS = [-3, 2, -1.5, 3, -2.5, 1.5, -1, 2.5];
@@ -1158,6 +1174,13 @@ function renderIntermission() {
 $('personalBtn').onclick = () => {
   $('pHim').value = personalInfo.him || store.get('mn_name') || '';
   $('pHer').value = personalInfo.her || '';
+  // Sign-in names you've both used (and the current ones).
+  const known = [...new Set([store.get('mn_name'), personalInfo.himLogin, personalInfo.herLogin, ...peers.map((p) => p.name),
+    ...Object.keys((typeof fstate !== 'undefined' && fstate.people) || {})].filter(Boolean))];
+  const opts = (cur) => `<option value="">(not set)</option>${known.map((n) => `<option ${n === cur ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('')}`;
+  const himNow = personalInfo.himLogin || store.get('mn_name');
+  $('pHimLogin').innerHTML = opts(himNow);
+  $('pHerLogin').innerHTML = opts(personalInfo.herLogin || known.find((n) => n !== himNow) || '');
   $('pDog').value = personalInfo.dog || '';
   $('pSince').value = personalInfo.since || '';
   $('settings').classList.remove('hidden');
@@ -1167,7 +1190,8 @@ $('settingsClose').onclick = () => $('settings').classList.add('hidden');
 $('settings').addEventListener('click', (e) => { if (e.target === $('settings')) $('settings').classList.add('hidden'); });
 $('savePersonal').onclick = async () => {
   try {
-    await api('/api/host/personal', { him: $('pHim').value, her: $('pHer').value, dog: $('pDog').value, since: $('pSince').value });
+    if ($('pHimLogin').value && $('pHimLogin').value === $('pHerLogin').value) { toast('You and she need different sign-in names.'); return; }
+    await api('/api/host/personal', { him: $('pHim').value, her: $('pHer').value, himLogin: $('pHimLogin').value, herLogin: $('pHerLogin').value, dog: $('pDog').value, since: $('pSince').value });
     $('settings').classList.add('hidden');
     toast('Saved 🎀');
   } catch (e) { toast(e.message); }
@@ -1180,9 +1204,8 @@ drawArt();
 
 /** Whose little face to show next to a name. */
 function avatarFor(p) {
-  const n = String(p.name || '').trim().toLowerCase();
-  if (personalInfo.her && n === personalInfo.her.toLowerCase()) return 'her';
-  if (personalInfo.him && n === personalInfo.him.toLowerCase()) return 'him';
+  const w = whoIs(p.name);
+  if (w) return w;
   return p.role === 'host' ? 'him' : 'her';
 }
 

@@ -8,7 +8,7 @@ Watch movies together from different places. Your laptop does all the heavy work
 - **Keeps playing on very poor Wi-Fi.** Every movie also gets a tiny 360p version (about 0.4 Mbps). On a connection around 1 Mbps the picture goes softer instead of stopping, and it sharpens again by itself when the connection improves. This works from the first minute, even while the movie is still converting.
 - **Either of you can play, pause or skip**, and it happens on both screens within a fraction of a second.
 - **Made for the two of you.** Beige and bows, with cartoon versions of you two and the pup acting out movie scenes, your own faces as reactions, and the pup fetching the movie while it loads.
-- **🎀 Personalize** (on the laptop): your names, the pup's name and the day you got together. The app shows "Together X days" and counts your movie nights.
+- **🎀 Personalize** (on the laptop): your names or pet names (e.g. Daddy & Dolly), the pup's name and the day you got together. Movie Night learns which sign-in name is whose (whoever uses the laptop is you, the other person is her) and shows the pet names everywhere; you can correct it under "You sign in as" / "She signs in as". The app shows "Together X days" and counts your movie nights.
 - **Your photos as polaroids:** in Personalize, click **Open photos folder** and drop pictures in. They stay on your laptop and are never uploaded to GitHub or anywhere else.
 - Subtitles and full screen.
 

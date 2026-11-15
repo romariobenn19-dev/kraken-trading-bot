@@ -302,7 +302,7 @@ function renderDiary() {
     <div class="stat"><b>${entries.length}</b><span>${entries.length === 1 ? 'movie' : 'movies'} together</span></div>
     <div class="stat"><b>${minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes}m`}</b><span>watched together</span></div>
     <div class="stat"><b>${fstate.snaps.length}</b><span>moments saved</span></div>
-    ${people.map((n) => favOf(n) ? `<div class="stat wide"><span class="avatar">${Art.head(avatarFor({ name: n }))}</span><span><span class="muted small">${escapeHtml(n)}'s favourite</span><br><b class="fav-title">${escapeHtml(favOf(n))}</b></span></div>` : '').join('')}`;
+    ${people.map((n) => favOf(n) ? `<div class="stat wide"><span class="avatar">${Art.head(avatarFor({ name: n }))}</span><span><span class="muted small">${escapeHtml(petName(n))}'s favourite</span><br><b class="fav-title">${escapeHtml(favOf(n))}</b></span></div>` : '').join('')}`;
   if (!entries.length) {
     $('diaryList').innerHTML = `<div class="empty"><div class="empty-art">${Art.couple()}</div><p class="muted">Your diary fills up as you watch. After each movie you'll both be asked for stars and a line about it.</p></div>`;
     return;
@@ -340,11 +340,11 @@ function reviewHtml(e, n, r, mineRated) {
   const me = myName();
   if (n !== me && !mineRated && !peeked.has(e.id)) {
     return `<div class="review sealed"><span class="avatar">${Art.head(avatarFor({ name: n }))}</span>
-      <div><b>${escapeHtml(n)}'s review is in 🔒</b><span class="muted small">Add yours to reveal it, so you don't influence each other.</span>
+      <div><b>${escapeHtml(petName(n))}'s review is in 🔒</b><span class="muted small">Add yours to reveal it, so you don't influence each other.</span>
       <button class="link-btn" data-peek="${e.id}">Peek anyway</button></div></div>`;
   }
   return `<div class="review"><span class="avatar">${Art.head(avatarFor({ name: n }))}</span><div class="review-body">
-    <div class="review-head"><b>${escapeHtml(n === me ? 'You' : n)}</b><span class="stars">${starText(r.stars)}<span class="dim">${'★'.repeat(Math.floor(5 - r.stars))}</span></span><span class="muted small">${starVerdict(r.stars)}</span></div>
+    <div class="review-head"><b>${escapeHtml(n === me ? 'You' : petName(n))}</b><span class="stars">${starText(r.stars)}<span class="dim">${'★'.repeat(Math.floor(5 - r.stars))}</span></span><span class="muted small">${starVerdict(r.stars)}</span></div>
     ${r.text ? `<blockquote class="pull">“${escapeHtml(r.text.replace(/^[“"']+|[”"']+$/g, ''))}”</blockquote>` : ''}
     ${(r.tags || []).length ? `<div class="review-tags">${r.tags.map((t) => `<span>${escapeHtml(t)}</span>`).join('')}</div>` : ''}
     ${r.review ? `<details class="full-review"><summary>Read the full review</summary><p>${escapeHtml(r.review).replace(/\n/g, '<br>')}</p></details>` : ''}
@@ -456,7 +456,7 @@ function showWheel(m) {
   const radius = (wheel.clientWidth || 300) / 2;
   wheel.innerHTML = pool.map((p, i) => `<span class="wheel-label" style="transform: translate(-50%, -50%) rotate(${i * seg + seg / 2}deg) translateY(-${Math.round(radius * 0.58)}px)">${escapeHtml(p.title.slice(0, 16))}</span>`).join('');
   const watching = (m.watchers || []).filter((n) => n !== m.by);
-  $('wheelResult').innerHTML = `<p class="muted">${escapeHtml(m.by === myName() ? 'You' : m.by)} spun the wheel…${watching.length ? ` 👀 ${escapeHtml(watching.map((n) => (n === myName() ? 'you' : n)).join(' & '))} watching` : ''}</p>`;
+  $('wheelResult').innerHTML = `<p class="muted">${escapeHtml(m.by === myName() ? 'You' : petName(m.by))} spun the wheel…${watching.length ? ` 👀 ${escapeHtml(watching.map((n) => (n === myName() ? 'you' : petName(n))).join(' & '))} watching` : ''}</p>`;
   $('wheelSheet').classList.remove('hidden');
   const target = 360 * 6 + (360 - (winnerIdx * seg + seg / 2));
   requestAnimationFrame(() => requestAnimationFrame(() => {
