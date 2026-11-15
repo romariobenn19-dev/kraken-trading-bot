@@ -1083,14 +1083,14 @@ function toast(text, ms = 4000) {
 }
 
 // ---- Personal touches -----------------------------------------------------------
-let personalInfo = { him: '', her: '', himLogin: '', herLogin: '', dog: '', since: '', nights: 0, photos: [] };
+let personalInfo = { him: '', her: '', himLogins: [], herLogins: [], guessed: [], others: [], dog: '', since: '', nights: 0, photos: [] };
 /** 'him' | 'her' | null for a sign-in name (or a pet name). */
 function whoIs(name) {
   const n = String(name || '').trim().toLowerCase();
   if (!n) return null;
   const eq = (x) => x && String(x).trim().toLowerCase() === n;
-  if (eq(personalInfo.himLogin)) return 'him';
-  if (eq(personalInfo.herLogin)) return 'her';
+  if ((personalInfo.himLogins || []).some(eq)) return 'him';
+  if ((personalInfo.herLogins || []).some(eq)) return 'her';
   if (eq(personalInfo.him)) return 'him';
   if (eq(personalInfo.her)) return 'her';
   return null;
@@ -1174,24 +1174,74 @@ function renderIntermission() {
 $('personalBtn').onclick = () => {
   $('pHim').value = personalInfo.him || store.get('mn_name') || '';
   $('pHer').value = personalInfo.her || '';
-  // Sign-in names you've both used (and the current ones).
-  const known = [...new Set([store.get('mn_name'), personalInfo.himLogin, personalInfo.herLogin, ...peers.map((p) => p.name),
-    ...Object.keys((typeof fstate !== 'undefined' && fstate.people) || {})].filter(Boolean))];
-  const opts = (cur) => `<option value="">(not set)</option>${known.map((n) => `<option ${n === cur ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('')}`;
-  const himNow = personalInfo.himLogin || store.get('mn_name');
-  $('pHimLogin').innerHTML = opts(himNow);
-  $('pHerLogin').innerHTML = opts(personalInfo.herLogin || known.find((n) => n !== himNow) || '');
+  loginDraft = { him: [...(personalInfo.himLogins || [])], her: [...(personalInfo.herLogins || [])] };
+  if (!loginDraft.him.length && store.get('mn_name')) loginDraft.him.push(store.get('mn_name'));
+  renderLoginChips();
   $('pDog').value = personalInfo.dog || '';
   $('pSince').value = personalInfo.since || '';
   $('settings').classList.remove('hidden');
   $('pHer').focus();
 };
+/** Sign-in names seen anywhere (devices online now, time zones, diary, wheel…). */
+function knownSignInNames() {
+  const f = typeof fstate !== 'undefined' ? fstate : {};
+  return [...new Set([store.get('mn_name'), ...peers.map((p) => p.name), ...Object.keys(f.people || {}),
+    ...(f.diary || []).flatMap((e) => Object.keys(e.ratings || {})), ...(personalInfo.himLogins || []), ...(personalInfo.herLogins || [])]
+    .filter((n) => n && !/^(host|guest)$/i.test(n)))];
+}
+let loginDraft = { him: [], her: [] };
+function renderLoginChips() {
+  const known = knownSignInNames();
+  for (const who of ['him', 'her']) {
+    const box = $(who === 'him' ? 'pHimLogins' : 'pHerLogins');
+    const other = who === 'him' ? 'her' : 'him';
+    const free = known.filter((n) => !loginDraft.him.includes(n) && !loginDraft.her.includes(n));
+    box.innerHTML = `${loginDraft[who].map((n) => `<span class="chip">${escapeHtml(n)}<button data-rm="${escapeHtml(n)}" aria-label="Remove ${escapeHtml(n)}">✕</button></span>`).join('')}
+      <select aria-label="Add a sign-in name"><option value="">＋ add a name</option>${free.map((n) => `<option>${escapeHtml(n)}</option>`).join('')}
+      ${known.filter((n) => loginDraft[other].includes(n)).map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)} (move here)</option>`).join('')}</select>`;
+    for (const b of box.querySelectorAll('[data-rm]')) b.onclick = () => { loginDraft[who] = loginDraft[who].filter((x) => x !== b.dataset.rm); renderLoginChips(); };
+    box.querySelector('select').onchange = (e) => {
+      const n = e.target.value;
+      if (!n) return;
+      loginDraft[other] = loginDraft[other].filter((x) => x !== n);
+      loginDraft[who] = [...new Set([...loginDraft[who], n])];
+      renderLoginChips();
+    };
+  }
+}
+
+/** On the laptop: a name we're not sure about joined -> ask once who it is. */
+const askedWho = new Set();
+function askWhoIsWho() {
+  if (!isHost || !$('settings').classList.contains('hidden') || $('whoAsk')) return;
+  const dismissed = (store.get('mn_whoDismissed') || '').split('|');
+  const assigned = [...(personalInfo.himLogins || []), ...(personalInfo.herLogins || []), ...(personalInfo.others || [])].map((x) => x.toLowerCase());
+  const online = peers.map((p) => p.name).filter((n) => n && !/^(host|guest)$/i.test(n));
+  const unsure = [...(personalInfo.guessed || []), ...online.filter((n) => !assigned.includes(n.toLowerCase()))]
+    .find((n) => !askedWho.has(n) && !dismissed.includes(n));
+  if (!unsure || (!personalInfo.him && !personalInfo.her && !personalInfo.himLogins.length)) return;
+  askedWho.add(unsure);
+  const el = document.createElement('div');
+  el.id = 'whoAsk';
+  el.className = 'who-ask';
+  el.innerHTML = `<b>Who's "${escapeHtml(unsure)}"?</b><span class="muted small">Someone joined with this name. Tell Movie Night so it uses the right pet name.</span>
+    <div class="row"><button class="ghost small" data-who="him">That's me${personalInfo.him ? ` (${escapeHtml(personalInfo.him)})` : ''}</button>
+    <button class="ghost small" data-who="her">That's ${escapeHtml(personalInfo.her || 'her')}</button>
+    <button class="ghost small" data-who="other">Someone else</button></div>`;
+  document.body.appendChild(el);
+  for (const b of el.querySelectorAll('[data-who]')) b.onclick = async () => {
+    el.remove();
+    if (b.dataset.who === 'other') store.set('mn_whoDismissed', [...dismissed, unsure].slice(-20).join('|'));
+    try { await api('/api/host/personal', { assign: { name: unsure, who: b.dataset.who } }); } catch (e) { toast(e.message); }
+  };
+}
+setInterval(askWhoIsWho, 4000);
+
 $('settingsClose').onclick = () => $('settings').classList.add('hidden');
 $('settings').addEventListener('click', (e) => { if (e.target === $('settings')) $('settings').classList.add('hidden'); });
 $('savePersonal').onclick = async () => {
   try {
-    if ($('pHimLogin').value && $('pHimLogin').value === $('pHerLogin').value) { toast('You and she need different sign-in names.'); return; }
-    await api('/api/host/personal', { him: $('pHim').value, her: $('pHer').value, himLogin: $('pHimLogin').value, herLogin: $('pHerLogin').value, dog: $('pDog').value, since: $('pSince').value });
+    await api('/api/host/personal', { him: $('pHim').value, her: $('pHer').value, himLogins: loginDraft.him, herLogins: loginDraft.her, dog: $('pDog').value, since: $('pSince').value });
     $('settings').classList.add('hidden');
     toast('Saved 🎀');
   } catch (e) { toast(e.message); }

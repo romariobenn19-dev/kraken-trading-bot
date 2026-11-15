@@ -18,7 +18,9 @@ const avatarHtml = (n) => (n ? `<span class="avatar">${Art.head(avatarFor({ name
 /** The two of you: names seen anywhere (you first). */
 function couple() {
   // The sign-in names from Personalize (e.g. "Romario Benn" and "Jelina"), you first.
-  const logins = [personalInfo.himLogin, personalInfo.herLogin].filter(Boolean);
+  // One name per person: yours if it's you, else the one that's online (or used first).
+  const pickOne = (list) => list.find((n) => n === me()) || list.find((n) => peers.some((p) => p.name === n)) || list[0];
+  const logins = [pickOne(personalInfo.himLogins || []), pickOne(personalInfo.herLogins || [])].filter(Boolean);
   const names = new Set([me(), ...logins]);
   for (const n of Object.keys(fstate.people || {})) names.add(n);
   for (const e of fstate.diary || []) for (const n of Object.keys(e.ratings)) names.add(n);

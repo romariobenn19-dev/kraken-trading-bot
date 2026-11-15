@@ -693,29 +693,62 @@ function personal() {
     photos = fs.readdirSync(PHOTOS).filter((f) => PHOTO_EXT.has(path.extname(f).toLowerCase()))
       .sort().slice(0, 40).map((f) => `/personal/photos/${encodeURIComponent(f)}`);
   } catch { /* no photos yet */ }
-  return { him: p.him || '', her: p.her || '', himLogin: p.himLogin || '', herLogin: p.herLogin || '', dog: p.dog || '', since: p.since || '', nights: p.nights || 0, photos };
+  const { him, her } = loginLists(p);
+  return { him: p.him || '', her: p.her || '', himLogins: him, herLogins: her, guessed: p.guessed || [], others: p.others || [], himLogin: him[0] || '', herLogin: her[0] || '',
+    dog: p.dog || '', since: p.since || '', nights: p.nights || 0, photos };
 }
 
 /**
  * Who is who: whoever signs in on the laptop is "him", the other person is "her", so the
  * pet names in Personalize (Daddy & Dolly…) go with the right sign-in names.
  */
+/** Each of you can have several sign-in names (laptop, phone…). Older configs had one each. */
+function loginLists(p) {
+  const clean = (a) => [...new Set((Array.isArray(a) ? a : []).map((x) => String(x).trim().slice(0, 30)).filter(Boolean))];
+  if (!Array.isArray(p.himLogins)) p.himLogins = clean([p.himLogin]);
+  if (!Array.isArray(p.herLogins)) {
+    p.herLogins = clean([p.herLogin]);
+    // The previous version guessed "her" as the second name to join, which can be wrong
+    // (e.g. his phone): ask the laptop to confirm it.
+    if (p.herLogin) p.guessed = [...new Set([...(p.guessed || []), p.herLogin])];
+  }
+  return { him: clean(p.himLogins), her: clean(p.herLogins) };
+}
 function learnWhoIsWho(c) {
   const p = config.personal || (config.personal = {});
   const n = String(c.name || '').trim();
   if (!n || /^(host|guest)$/i.test(n)) return;
-  const same = (a, b) => String(a || '').toLowerCase() === n.toLowerCase();
-  if (same(p.himLogin) || same(p.herLogin)) return;
-  if (c.role === 'host' && !p.himLogin) p.himLogin = n;
-  else if (!p.herLogin && (c.role !== 'host' || p.himLogin)) p.herLogin = n; // her device, or the second person to join
-  else return;
+  const { him, her } = loginLists(p);
+  const has = (list) => list.some((x) => x.toLowerCase() === n.toLowerCase());
+  if (has(him) || has(her)) return;
+  if (c.role === 'host' && !him.length) p.himLogins = [n];          // the laptop: that's him
+  else if (c.role !== 'host' && !her.length) {                       // probably her device: a guess the laptop confirms
+    p.herLogins = [n];
+    p.guessed = [...new Set([...(p.guessed || []), n])];
+  } else return;                                                     // anyone else: the laptop asks "who's this?"
   saveConfig();
   broadcast({ t: 'personal' });
 }
 
 function savePersonal(body) {
   const p = config.personal || (config.personal = {});
-  for (const k of ['him', 'her', 'dog', 'himLogin', 'herLogin']) if (typeof body[k] === 'string') p[k] = body[k].trim().slice(0, 30);
+  for (const k of ['him', 'her', 'dog']) if (typeof body[k] === 'string') p[k] = body[k].trim().slice(0, 30);
+  loginLists(p);
+  const norm = (a) => [...new Set((Array.isArray(a) ? a : []).map((x) => String(x).trim().slice(0, 30)).filter(Boolean))].slice(0, 6);
+  if (Array.isArray(body.himLogins)) p.himLogins = norm(body.himLogins);
+  if (Array.isArray(body.herLogins)) p.herLogins = norm(body.herLogins).filter((n) => !p.himLogins.includes(n));
+  // "Who's Roman?" -> that's him / her / someone else.
+  if (body.assign && typeof body.assign.name === 'string') {
+    const n = body.assign.name.trim().slice(0, 30);
+    p.himLogins = p.himLogins.filter((x) => x !== n);
+    p.herLogins = p.herLogins.filter((x) => x !== n);
+    if (body.assign.who === 'him') p.himLogins.push(n);
+    if (body.assign.who === 'her') p.herLogins.push(n);
+    p.others = [...new Set([...(p.others || []), ...(body.assign.who === 'other' ? [n] : [])])].filter((x) => !p.himLogins.includes(x) && !p.herLogins.includes(x));
+  }
+  // Anything the laptop has now confirmed is no longer a guess.
+  if (Array.isArray(body.himLogins) || Array.isArray(body.herLogins) || body.assign) p.guessed = (p.guessed || []).filter((n) => body.assign ? n !== body.assign.name : false);
+  delete p.himLogin; delete p.herLogin;
   if (typeof body.since === 'string' && /^(\d{4}-\d{2}-\d{2})?$/.test(body.since)) p.since = body.since;
   saveConfig();
   broadcast({ t: 'personal' });
