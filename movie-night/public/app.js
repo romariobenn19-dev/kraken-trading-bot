@@ -441,6 +441,8 @@ async function setupQuality() {
   }
   if (!hls) return;
   hls.autoLevelCapping = maxOk;
+  deviceMaxLevel = maxOk;
+  smoothCap = -1;
   $('quality').classList.toggle('hidden', maxOk < 1);
   qualityLevels = levels.slice(0, maxOk + 1).map((lv, index) => ({ index, label: labelFor(lv) })).reverse();
   const sel = $('quality');
@@ -567,14 +569,14 @@ function maybeUpgradeBuffered() {
   if (!hls || !hls.autoLevelEnabled || !state || state.paused) return;
   const playing = hls.currentLevel;
   if (playing < 0 || bufferAhead() < 30 || Date.now() - lastUpgrade < 30000) return;
-  if (Date.now() - lastStallAt < 120000) return; // just had a pause: stay steady for a bit
-  // Best version the connection sustains even at its slowest moment of the last 30 s
-  // (1.5x headroom so the buffer refills while we re-download).
-  const bw = safeBandwidth();
+  if (Date.now() - lastStallAt < 600000) return; // had a pause recently: smooth beats sharp
+  // Re-downloading what's loaded costs buffer: only when the connection has been solid
+  // for a minute and a half, with twice the room the sharper version needs.
+  const bw = lowBandwidth(90000);
   const top = hls.autoLevelCapping >= 0 ? hls.autoLevelCapping : hls.levels.length - 1;
   let target = -1;
   for (let i = top; i > playing; i--) {
-    if (levelRate(i) * 1.5 <= bw) { target = i; break; }
+    if (levelRate(i) * 2 <= bw) { target = i; break; }
   }
   if (target < 0) return;
   const KEEP = 20; // seconds of what's already loaded to keep as a safety cushion
@@ -1586,8 +1588,10 @@ $('subsAdd').onclick = async () => {
 function tuneAbrForBuffer() {
   if (!hls || !hls.levels.length) return;
   const ahead = bufferAhead();
-  hls.config.abrBandWidthUpFactor = ahead > 90 ? 0.95 : ahead > 45 ? 0.85 : 0.7;
-  hls.config.abrBandWidthFactor = ahead > 90 ? 1.0 : ahead > 45 ? 0.9 : 0.8;
+  updateSmoothCap(ahead);
+  // Smooth first: going sharper needs plenty of spare speed; staying put is easy.
+  hls.config.abrBandWidthUpFactor = isShaky() ? 0.55 : 0.65;
+  hls.config.abrBandWidthFactor = ahead > 45 ? 0.9 : 0.8;
   // Don't panic on a short dip: with plenty loaded, keep a quality floor.
   // (If the connection really collapses, the buffer drains below these and the floor lifts.)
   const levels = hls.levels;
@@ -1599,7 +1603,7 @@ function tuneAbrForBuffer() {
   // ...but only when the connection can actually carry it. On a ~1 Mbps phone a forced
   // 1080p just drains the cushion and pauses; better to drop to a light version and keep playing.
   const lite = lowest1080 >= 0 ? levels[Math.min(lowest1080, top)] : null;
-  const carries = lite && safeBandwidth() >= (lite.averageBitrate || lite.bitrate) * 1.1;
+  const carries = lite && lowest1080 <= top && lowBandwidth(90000) >= (lite.averageBitrate || lite.bitrate) * 1.4;
   let floor = ahead >= 12 && carries ? Math.min(lowest1080, top) : 0;
   hls.config.minAutoBitrate = floor > 0 ? levels[floor].maxBitrate || levels[floor].bitrate : 0;
 }
@@ -1618,8 +1622,42 @@ let lastStallAt = 0;
 setInterval(() => {
   if (!hls || !hls.bandwidthEstimate || hls.currentLevel < 0) return;
   bwSamples.push([Date.now(), hls.bandwidthEstimate]);
-  while (bwSamples.length && bwSamples[0][0] < Date.now() - 60000) bwSamples.shift();
+  while (bwSamples.length && bwSamples[0][0] < Date.now() - 180000) bwSamples.shift();
 }, 2000);
+
+/** The slowest the connection has been over the last `ms` (what we can really count on). */
+function lowBandwidth(ms) {
+  const recent = bwSamples.filter(([t]) => t > Date.now() - ms).map(([, b]) => b);
+  if (!recent.length) return hls ? hls.bandwidthEstimate || 0 : 0;
+  return Math.min(...recent);
+}
+
+/**
+ * Smooth first. The sharpest version allowed right now is one the connection has carried,
+ * with room to spare, for the last 90 seconds (even at its slowest moment). It comes down
+ * straight away when the connection gets slow, and only goes back up one step at a time:
+ * after 90 s of steady speed, with a minute loaded, and never within 10 minutes of a pause.
+ * So a connection that keeps dropping to 0.3 Mbps simply stays at 360p and keeps playing.
+ */
+let deviceMaxLevel = -1;
+let smoothCap = -1;
+let smoothCapRaisedAt = 0;
+function updateSmoothCap(ahead) {
+  if (!hls || !hls.levels.length || deviceMaxLevel < 0) return;
+  if (!hls.autoLevelEnabled) { hls.autoLevelCapping = deviceMaxLevel; return; } // a quality picked by hand
+  const low = lowBandwidth(90000);
+  if (!low) return;
+  let fit = 0;
+  for (let i = 0; i <= deviceMaxLevel; i++) if (levelRate(i) * 1.4 <= low) fit = i;
+  if (smoothCap < 0) smoothCap = deviceMaxLevel; // the start: the starting-quality logic decides
+  const history = bwSamples.length && bwSamples[0][0] < Date.now() - 85000;
+  if (fit < smoothCap && (history || ahead < 30)) smoothCap = fit;   // slow now: come down at once
+  else if (fit > smoothCap && history && ahead >= 60 && Date.now() - lastStallAt > 600000 && Date.now() - smoothCapRaisedAt > 120000) {
+    smoothCap += 1;                                                  // steady for a while: one step up
+    smoothCapRaisedAt = Date.now();
+  }
+  if (hls.autoLevelCapping !== smoothCap) hls.autoLevelCapping = Math.min(deviceMaxLevel, smoothCap);
+}
 
 /** The slowest the connection has been over the last 30 s (what we can count on). */
 function safeBandwidth() {
@@ -1630,6 +1668,10 @@ function safeBandwidth() {
 
 function noteStall() {
   lastStallAt = Date.now();
+  if (hls && deviceMaxLevel >= 0 && hls.autoLevelEnabled) {
+    smoothCap = Math.max(0, Math.min(smoothCap < 0 ? deviceMaxLevel : smoothCap, hls.currentLevel) - 1);
+    hls.autoLevelCapping = smoothCap;
+  }
   let log = [];
   try { log = JSON.parse(store.get('mn_stalls') || '[]'); } catch { /* ignore */ }
   log = [...log.filter((t) => t > Date.now() - 7 * 86400000), Date.now()].slice(-20);

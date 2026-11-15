@@ -57,7 +57,8 @@ const HEVC_LADDER = [
   { label: '1080p', tag: 'lite', width: 1920, kbps: 1600, codec: 'hvc1.1.6.L123.90' },
   { label: '720p',  width: 1280, kbps: 1600, codec: 'hvc1.1.6.L93.90' },
   { label: '480p',  width: 854,  kbps: 800,  codec: 'hvc1.1.6.L90.90' },
-  { label: '360p',  width: 640,  kbps: 420,  codec: 'hvc1.1.6.L90.90' },
+  // The lightest version (lighter sound too, it's a big share of its data).
+  { label: '360p',  width: 640,  kbps: 420,  codec: 'hvc1.1.6.L90.90', audio: 96 },
 ];
 // Fallback for devices/browsers without HEVC support.
 const AVC_LADDER = [
@@ -383,7 +384,7 @@ async function main() {
   if (opts.hevc) for (const r of HEVC_LADDER.filter(fits)) jobs.push({ ...r, family: 'hevc' });
   if (opts.avc) for (const r of AVC_LADDER.filter(fits)) jobs.push({ ...r, family: 'avc' });
   // H.264-only movie: there's no tiny HEVC 360p to fall back on, so add an H.264 one.
-  if (opts.avc && !opts.hevc && srcW >= 700) jobs.push({ label: '360p', width: 640, kbps: 550, codec: 'avc1.64001e', family: 'avc' });
+  if (opts.avc && !opts.hevc && srcW >= 700) jobs.push({ label: '360p', width: 640, kbps: 550, codec: 'avc1.64001e', family: 'avc', audio: 96 });
   if (!jobs.length) {
     // Very small source: make a single rendition at native width.
     const w = even(Math.min(srcW, 640));
@@ -491,7 +492,8 @@ async function main() {
         ...(isHdr && toneMap ? ['-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709'] : []),
         ...videoCodecArgs(enc.name, job.family, job.kbps, gop, job.best),
         '-force_key_frames', `expr:gte(t,n_forced*${SEGMENT_SECONDS})`,
-        ...(audio ? ['-c:a', 'aac', '-b:a', '160k', '-ac', '2', '-ar', '48000'] : []),
+        // The small versions get lighter sound (it's a big share of their data).
+        ...(audio ? ['-c:a', 'aac', '-b:a', `${job.audio || 160}k`, '-ac', '2', '-ar', '48000'] : []),
         '-sn', '-dn', '-map_metadata', '-1', '-map_chapters', '-1',
         '-f', 'hls', '-hls_time', String(SEGMENT_SECONDS), '-hls_playlist_type', growing ? 'event' : 'vod',
         '-hls_segment_type', 'fmp4', '-hls_fmp4_init_filename', 'init.mp4',
