@@ -55,7 +55,7 @@ If Windows says *"Windows protected your PC"*, click **More info**, then **Run a
 **Series:** episodes are recognised from their names ("Show S01E14", "Show Episode 166", "Show - 07") and grouped into one show with seasons. When an episode ends, the next one starts on both screens after a 12-second countdown (you can cancel). **Skip intro** shows near the start of episodes; set the intro length per show on its page.
 
 **While watching:**
-- Curtains open with a 3-2-1 countdown on both screens when a movie starts
+- **💋 Three kisses before every movie:** when you press play, both screens say "Don't forget our three kisses". Tap **Blow a kiss** three times: each kiss flies onto the other person's screen and your three lips fill up. When you've both sent three, "💞 Enjoy the movie!" and it starts together. (**Start the movie ▶** skips it, e.g. if one of you isn't there. Pausing and resuming doesn't ask again, and neither does the next episode playing on its own.)
 - 💬 live chat that pops up on both screens
 - 🤗 hold to cuddle: when you both hold it at the same time, hearts fill the screen
 - 💌 love notes: leave a note at a moment in a movie; it pops up for the other person when they reach it

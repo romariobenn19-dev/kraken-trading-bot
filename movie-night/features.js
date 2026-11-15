@@ -342,6 +342,7 @@ module.exports = function createFeatures({ ROOT, LIBRARY, discover, config, save
     clearTimeout(nx.timer);
     nextUp = null;
     broadcast({ t: 'nextUp', cancel: true });
+    room.noKissFor = nx.movieId; // binge mode: no kisses between episodes
     loadMovie(nx.movieId);
     setTimeout(() => startPlaying(), 1500);
   }

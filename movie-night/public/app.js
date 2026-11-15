@@ -778,7 +778,7 @@ function renderPeers() {
 
 function renderHold() {
   const el = $('hold');
-  if (!state || !meta || !state.hold || state.hold.reason === 'countdown') { el.classList.add('hidden'); return; }
+  if (!state || !meta || !state.hold || state.hold.reason === 'countdown' || state.hold.reason === 'kisses') { el.classList.add('hidden'); return; }
   el.classList.remove('hidden');
   const need = state.hold.reason === 'starting' ? state.startBuffer : state.resumeTarget;
   const needFor = (p) => (state.hold.reason === 'starting' && p.shaky ? Math.max(need, 45) : need);

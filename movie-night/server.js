@@ -299,6 +299,7 @@ function publicState() {
     t: 'state', v: room.version, movieId: room.movieId, paused: room.paused, wantPlay: room.wantPlay,
     pos: room.pos, at: room.at, hold: room.hold, resumeTarget: resumeTarget(), startBuffer: START_BUFFER,
     intermission: room.intermission ? { until: room.intermission.until, by: room.intermission.by } : null,
+    kisses: publicKisses(),
     surprise: !!room.movieId && room.surprise === room.movieId,
   };
 }
@@ -344,7 +345,8 @@ function hasBuffer(c, need) {
 
 function evaluate() {
   if (!room.movieId || !room.wantPlay || clients.size === 0) return;
-  if (room.hold && room.hold.reason === 'countdown') return; // curtains are opening
+  if (room.hold && room.hold.reason === 'countdown') return; // about to start
+  if (room.hold && room.hold.reason === 'kisses') { checkKisses(); return; } // blowing our three kisses
   const list = [...clients.values()];
   if (!room.paused) {
     const struggling = list.filter((c) => participating(c) && !c.late && !c.full && (c.stalled || c.buffer < LOW_BUFFER));
@@ -368,7 +370,7 @@ function evaluate() {
     }
     const waitingFor = waiting.map((c) => c.name);
     if (!waitingFor.length) {
-      if (room.pos < 2 && room.countdownFor !== room.movieId) { startWithCurtains(); return; }
+      if (room.kissedFor !== room.loadId) { startWithKisses(); return; }
       room.hold = null;
       setPosition(room.pos, false);
       countMovieNight();
@@ -487,6 +489,19 @@ function handle(ws, c, msg) {
       scheduleIntermissionEnd();
       changed();
       break;
+    case 'kiss3': {
+      if (!room.hold || room.hold.reason !== 'kisses') return;
+      const n = Math.min(KISSES, (room.kisses[c.name] || 0) + 1);
+      if (n === room.kisses[c.name]) return;
+      room.kisses[c.name] = n;
+      broadcast({ t: 'kissBlown', from: c.name, n });
+      changed();
+      checkKisses();
+      break;
+    }
+    case 'kissSkip':
+      checkKisses(c.name);
+      break;
     case 'intermissionEnd':
       if (room.intermission) endIntermission();
       break;
@@ -545,7 +560,42 @@ function rememberDevice(c, deviceId) {
   saveConfig();
 }
 
-/** Start of a movie: curtains open with a 3-2-1 countdown on every screen, then play. */
+/**
+ * Before the movie: three kisses. Everyone watching blows three kisses (each one flies onto
+ * the other screens); once everyone has, "Enjoy the movie!" and it starts together.
+ * Either of you can also just start it.
+ */
+const KISSES = 3;
+function kissers() {
+  return [...new Set([...clients.values()].filter((c) => participating(c) && !c.late).map((c) => c.name))];
+}
+function publicKisses() {
+  return room.hold && room.hold.reason === 'kisses' ? { counts: room.kisses, need: KISSES, who: kissers() } : null;
+}
+function startWithKisses() {
+  room.kissedFor = room.loadId;
+  room.kisses = {};
+  room.hold = { reason: 'kisses', who: [], since: Date.now() };
+  changed();
+}
+function checkKisses(skippedBy) {
+  if (!room.hold || room.hold.reason !== 'kisses') return;
+  const who = kissers();
+  if (!skippedBy && (!who.length || who.some((n) => (room.kisses[n] || 0) < KISSES))) return;
+  // Tell the screens first, so they show "Enjoy the movie!" instead of just closing.
+  broadcast({ t: 'kissesDone', skippedBy: skippedBy || null, at: Date.now() + 2600 });
+  room.hold = { reason: 'countdown', who: [], since: Date.now() };
+  changed();
+  setTimeout(() => {
+    if (!room.hold || room.hold.reason !== 'countdown') return;
+    room.hold = null;
+    setPosition(room.pos, false);
+    countMovieNight();
+    changed();
+  }, 2600);
+}
+
+/** (Old) start of a movie: a 3-2-1 countdown on every screen, then play. */
 function startWithCurtains() {
   room.countdownFor = room.movieId;
   room.hold = { reason: 'countdown', who: [], since: Date.now() };
@@ -568,6 +618,10 @@ function loadMovie(movieId, pos) {
   if (room.surprise && room.surprise !== movieId) room.surprise = null;
   room.movieId = movieId || null;
   room.wantPlay = false; room.hold = null; room.stalls = 0;
+  // A fresh "session" with this movie: the three kisses come once, when it first plays.
+  room.loadId = (room.loadId || 0) + 1;
+  if (room.noKissFor && room.noKissFor === movieId) room.kissedFor = room.loadId; // next episode: keep going
+  room.noKissFor = null;
   let start = pos;
   if (start === undefined && movieId) {
     const p = features.progressOf(movieId);

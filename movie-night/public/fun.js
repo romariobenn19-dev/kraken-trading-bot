@@ -553,6 +553,74 @@ function onBingo(m) {
 }
 
 // =================================================================================
+// Three kisses before the movie (our little ritual)
+// =================================================================================
+let kissFinishing = false;
+const lipsRow = (n) => [1, 2, 3].map((i) => `<span class="kiss-slot ${i <= n ? 'on' : ''}">${Art.lips()}</span>`).join('');
+function renderKisses() {
+  const el = $('kisses');
+  const k = state && meta && state.kisses;
+  if (!k) { if (!kissFinishing) el.classList.add('hidden'); return; }
+  kissFinishing = false;
+  const mine = k.counts[myName()] || 0;
+  const people = k.who.length ? k.who : [myName()];
+  const others = people.filter((n) => n !== myName());
+  const waitingFor = others.filter((n) => (k.counts[n] || 0) < k.need);
+  const fresh = el.classList.contains('hidden') || !el.querySelector('.kiss-card');
+  if (fresh) {
+    el.innerHTML = `<div class="kiss-card">
+      <div class="kiss-art">${Art.couple('love', [])}</div>
+      <h2>Don't forget our three kisses 💋</h2>
+      <div class="kiss-people" id="kissPeople"></div>
+      <button class="kiss-btn" id="kissBtn"></button>
+      <div class="kiss-status muted" id="kissStatus"></div>
+      <div class="kiss-more"><button class="ghost small" id="kissPredict">🔮 Make a prediction</button><button class="ghost small" id="kissSkip">Start the movie ▶</button></div>
+    </div>`;
+    $('kissBtn').onclick = (e) => { e.stopPropagation(); send({ t: 'kiss3' }); };
+    $('kissSkip').onclick = (e) => { e.stopPropagation(); send({ t: 'kissSkip' }); };
+    $('kissPredict').onclick = (e) => { e.stopPropagation(); openPredict(meta.id); };
+    el.onclick = (e) => e.stopPropagation();
+    el.classList.remove('hidden');
+    const n = document.querySelector('.nudge');
+    if (n) n.remove();
+  }
+  $('kissPeople').innerHTML = people.map((n) => `<div class="kiss-person ${(k.counts[n] || 0) >= k.need ? 'done' : ''}">${`<span class="avatar">${Art.head(avatarFor({ name: n }))}</span>`}
+    <b>${escapeHtml(n === myName() ? 'You' : n)}</b><span class="kiss-lips">${lipsRow(k.counts[n] || 0)}</span></div>`).join('');
+  const btn = $('kissBtn');
+  btn.disabled = mine >= k.need;
+  btn.innerHTML = mine >= k.need ? 'Kisses sent 💕' : `💋 Blow a kiss <small>${mine + 1} of ${k.need}</small>`;
+  $('kissStatus').textContent = mine < k.need
+    ? (others.length ? `Tap three times. Each one lands on ${others.join(' & ')}'s screen.` : 'Tap three times. Then the movie starts.')
+    : waitingFor.length ? `Waiting for ${waitingFor.join(' & ')}'s kisses…` : '';
+}
+/** A kiss flies: yours floats away up the screen, theirs lands on yours. */
+function flyKiss(from, n) {
+  const mineK = from === myName();
+  const el = document.createElement('div');
+  el.className = `flying-kiss ${mineK ? 'out' : 'in'}`;
+  el.style.left = `${mineK ? 50 : 20 + Math.random() * 60}%`;
+  el.style.setProperty('--tilt', `${Math.round(Math.random() * 30 - 15)}deg`);
+  el.innerHTML = `${Art.lips()}<small>${mineK ? `Kiss ${n} sent` : `💋 from ${escapeHtml(from)}`}</small>`;
+  ($('kisses').classList.contains('hidden') ? $('stage') : $('kisses')).appendChild(el);
+  setTimeout(() => el.remove(), 2600);
+  if (navigator.vibrate && !mineK) { try { navigator.vibrate(60); } catch { /* not allowed */ } }
+}
+function kissesDone(m) {
+  const el = $('kisses');
+  if (el.classList.contains('hidden')) return;
+  kissFinishing = true;
+  const card = el.querySelector('.kiss-card');
+  if (card) {
+    card.innerHTML = `<div class="kiss-art">${Art.couple('love', [])}</div>
+      <h2>${m.skippedBy ? `${escapeHtml(m.skippedBy === myName() ? 'You' : m.skippedBy)} started the movie 🍿` : '💞 Enjoy the movie!'}</h2>
+      <p class="muted">${m.skippedBy ? 'Kisses still count later 😘' : 'Six kisses sent. Now, popcorn.'}</p>`;
+  }
+  if (!m.skippedBy) burstHearts(30);
+  setTimeout(() => { kissFinishing = false; el.classList.add('fade-out'); }, Math.max(600, m.at - serverNow() - 600));
+  setTimeout(() => { el.classList.add('hidden'); el.classList.remove('fade-out'); el.innerHTML = ''; }, Math.max(1200, m.at - serverNow()));
+}
+
+// =================================================================================
 // Surprise movie: the title stays hidden until the curtains open
 // =================================================================================
 const revealedSurprises = new Set();
@@ -947,6 +1015,8 @@ function onFunMessage(m) {
       else if (m.kind === 'close') closeDoodle();
       break;
     case 'predicted': if (m.by !== myName()) toast(`🔮 ${m.by} sealed a secret prediction`); break;
+    case 'kissBlown': flyKiss(m.from, m.n); break;
+    case 'kissesDone': kissesDone(m); break;
     default: if (typeof onHubMessage === 'function') onHubMessage(m);
   }
 }
@@ -967,7 +1037,7 @@ tileActions = function (mv) {
   gift.textContent = '🎁';
   gift.onclick = (e) => {
     e.stopPropagation();
-    if (!confirm(`Start "${(mv.tmdb && mv.tmdb.title) || mv.title}" as a surprise? Its name stays hidden on both screens until the curtains open.`)) return;
+    if (!confirm(`Start "${(mv.tmdb && mv.tmdb.title) || mv.title}" as a surprise? Its name stays hidden on both screens until the movie starts.`)) return;
     send({ t: 'load', movieId: mv.id, surprise: true });
   };
   box.prepend(gift);
@@ -1034,7 +1104,7 @@ function funAfterClose() {
   const n = document.querySelector('.nudge');
   if (n) n.remove();
 }
-function funAfterState() { updateHoldArt(); updateSurprise(); renderSnackBreak(); if (state && !state.paused) { const n = document.querySelector('.nudge'); if (n) n.remove(); } }
+function funAfterState() { renderKisses(); updateHoldArt(); updateSurprise(); renderSnackBreak(); if (state && !state.paused) { const n = document.querySelector('.nudge'); if (n) n.remove(); } }
 function funAfterFeatures() { renderReactMarks(); checkNewBadges(); if (currentTab === 'diary') renderBadges(); }
 
 applySeason();
