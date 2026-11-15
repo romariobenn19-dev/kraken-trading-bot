@@ -73,7 +73,9 @@ If Windows says *"Windows protected your PC"*, click **More info**, then **Run a
 
 **Also new:** 26 **badges** (streaks, marathons, first horror night, anniversary night…) in the diary, **✨ Our Year Wrapped** (a story-style recap of your year), a **💌 postcard** for each movie (save or share it), a **mood picker** on the home screen (cosy, scary, laugh, cry… needs the TMDB key), **Our wishlist** (add movies you want; the laptop gets a note, and it's ticked off when the movie arrives), **seasonal themes** (snow at Christmas, bats at Halloween, hearts on Valentine's and your anniversary), and the cartoon three of you **dress up for the movie** (blanket for horror, 3D glasses for action, tissues for drama, Santa hats in December).
 
-**📖 Our diary:** after each movie you're both asked for stars and a one-line review. Each movie becomes a scrapbook page with your ratings, quotes, love notes and snapshots, plus stats: movies together, hours together, each of your favourites.
+**🎬 Reviews, critic style:** near the end of a movie you're each asked for your review, and you can review any movie any time with **★** on its tile (tap ★ again to edit). A review has **half stars** (★★★★½ "Loved it"), **your quote** (the line critics get on the poster), **highlights** (😭 Made me cry, 💘 Romantic, 🎭 Great acting…) and an optional **full review**. Your partner's review stays **sealed 🔒 until you've written yours**, so you don't influence each other (there's a "peek anyway"). Once you've both reviewed, the movie gets **your score** and a verdict: 💞 Couple's Choice, ⚡ Split decision, 👍 Good night in or 🙈 Not for us, shown on its tile too.
+
+**📖 Our diary:** after each movie you're both asked for your review. Each movie becomes a scrapbook page with your ratings, quotes, love notes and snapshots, plus stats: movies together, hours together, each of your favourites.
 
 **🎲 Pick together:** swipe ♥ or ✗ on what you haven't watched. When you both ♥ the same one it's a match. **Spin the wheel** spins on both screens and lands on the same pick.
 

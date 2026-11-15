@@ -206,30 +206,61 @@ function showNextUp(m) {
   nextTimer = setInterval(render, 1000);
 }
 
-// ---- Diary rating card ------------------------------------------------------------------------
-let rating = { entryId: null, stars: 0 };
-function openRateCard(entryId, title, movieId) {
-  const entry = fstate.diary.find((e) => e.id === entryId);
-  if (entry && entry.ratings[myName()]) return; // already rated
-  rating = { entryId, stars: 0 };
-  $('rateTitle').textContent = `How was ${title}?`;
+// ---- Review card (critic style) --------------------------------------------------------------
+const REVIEW_TAGS = ['😭 Made me cry', '😂 So funny', '💘 Romantic', '😱 Scary', '🎭 Great acting', '🎨 Beautiful', '🎶 Great music', '🌀 Mind-blowing', '🐢 A bit slow', '🔁 Rewatch!'];
+let rating = { entryId: null, movieId: null, stars: 0, tags: new Set() };
+function openRateCard(entryId, title, movieId, manual) {
+  const entry = entryId ? fstate.diary.find((e) => e.id === entryId) : [...fstate.diary].reverse().find((e) => e.movieId === movieId);
+  const mine = entry && entry.ratings[myName()];
+  if (mine && !manual) return; // already reviewed (the end-of-movie card only asks once)
+  rating = { entryId: entry ? entry.id : null, movieId, stars: mine ? mine.stars : 0, tags: new Set(mine ? mine.tags || [] : []) };
+  $('rateTitle').textContent = mine ? `Your review of ${title}` : `How was ${title}?`;
   $('rateArt').innerHTML = Art.couple('love');
-  $('rateText').value = '';
+  $('rateText').value = mine ? mine.text || '' : '';
+  $('rateReview').value = mine ? mine.review || '' : '';
+  $('rateMore').open = !!(mine && mine.review);
+  $('rateSave').textContent = mine ? 'Save changes' : 'Save to our diary';
   renderStars();
+  renderTags();
   $('rateCard').classList.remove('hidden');
 }
 function renderStars() {
-  $('rateStars').innerHTML = [1, 2, 3, 4, 5].map((n) => `<button class="star ${n <= rating.stars ? 'on' : ''}" role="radio" aria-checked="${n === rating.stars}" aria-label="${n} star${n === 1 ? '' : 's'}" data-n="${n}">★</button>`).join('');
-  for (const b of $('rateStars').querySelectorAll('.star')) b.onclick = () => { rating.stars = Number(b.dataset.n); renderStars(); };
+  const s = rating.stars;
+  $('rateStars').innerHTML = [1, 2, 3, 4, 5].map((n) => `<span class="star ${s >= n ? 'on' : s >= n - 0.5 ? 'half' : ''}" data-n="${n}">★</span>`).join('');
+  $('rateStars').setAttribute('aria-valuenow', String(s));
+  const v = starVerdict(s);
+  $('rateVerdict').textContent = s ? `${starText(s)}  ${v}` : 'Tap a star (tap its left half for ½)';
+  $('rateVerdict').classList.toggle('set', !!s);
+}
+$('rateStars').addEventListener('click', (e) => {
+  const st = e.target.closest('.star');
+  if (!st) return;
+  const r = st.getBoundingClientRect();
+  const n = Number(st.dataset.n);
+  rating.stars = e.clientX - r.left < r.width / 2 ? n - 0.5 : n;
+  renderStars();
+});
+$('rateStars').addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowRight' || e.key === 'ArrowUp') rating.stars = Math.min(5, (rating.stars || 0) + 0.5);
+  else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') rating.stars = Math.max(0.5, (rating.stars || 1) - 0.5);
+  else return;
+  e.preventDefault(); e.stopPropagation(); renderStars();
+});
+function renderTags() {
+  $('rateTags').innerHTML = REVIEW_TAGS.map((t) => `<button class="rtag ${rating.tags.has(t) ? 'on' : ''}" aria-pressed="${rating.tags.has(t)}"></button>`).join('');
+  $('rateTags').querySelectorAll('.rtag').forEach((b, i) => {
+    b.textContent = REVIEW_TAGS[i];
+    b.onclick = () => { const t = REVIEW_TAGS[i]; if (rating.tags.has(t)) rating.tags.delete(t); else rating.tags.add(t); renderTags(); };
+  });
 }
 $('rateSave').onclick = () => {
   if (!rating.stars) { toast('Tap the stars first ⭐'); return; }
-  send({ t: 'rate', entryId: rating.entryId, stars: rating.stars, text: $('rateText').value.trim() });
+  send({ t: 'rate', entryId: rating.entryId, movieId: rating.movieId, stars: rating.stars, text: $('rateText').value.trim(), review: $('rateReview').value.trim(), tags: [...rating.tags] });
   $('rateCard').classList.add('hidden');
   toast('Saved to your diary 📖');
 };
 $('rateSkip').onclick = () => $('rateCard').classList.add('hidden');
-$('rateText').addEventListener('keydown', (e) => e.stopPropagation());
+for (const id of ['rateText', 'rateReview']) $(id).addEventListener('keydown', (e) => e.stopPropagation());
 
 // ---- Hooks from app.js ---------------------------------------------------------------------------
 function afterOpenMovie() {

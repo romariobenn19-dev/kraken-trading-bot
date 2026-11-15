@@ -58,6 +58,22 @@ function avgStars(movieId) {
   return all.length ? all.reduce((a, b) => a + b, 0) / all.length : 0;
 }
 const isFav = (id) => !!fstate.favorites[id] || avgStars(id) >= 4;
+/** 4.5 -> "★★★★½" */
+const starText = (n) => `${'★'.repeat(Math.floor(n))}${n % 1 ? '½' : ''}`;
+function starVerdict(n) {
+  return !n ? '' : n <= 1.5 ? 'Not for us' : n <= 2.5 ? 'Meh' : n <= 3.5 ? 'Good' : n < 5 ? 'Loved it' : 'Masterpiece';
+}
+/** Both of you reviewed it: the couple's verdict (like a critics' score). */
+function coupleVerdict(movieId) {
+  const e = [...fstate.diary].reverse().find((x) => x.movieId === movieId && Object.keys(x.ratings).length >= 2);
+  if (!e) return null;
+  const s = Object.values(e.ratings).map((r) => r.stars);
+  const avg = s.reduce((a, b) => a + b, 0) / s.length;
+  const v = s.every((x) => x >= 4) ? { icon: '💞', label: 'Couple\'s Choice' } : Math.max(...s) - Math.min(...s) >= 2 ? { icon: '⚡', label: 'Split decision' }
+    : s.every((x) => x <= 2) ? { icon: '🙈', label: 'Not for us' } : { icon: '👍', label: 'Good night in' };
+  return { ...v, avg: Math.round(avg * 10) / 10 };
+}
+const peeked = new Set();
 
 function play(mv, fromStart) {
   if (mv.pending) { send({ t: 'want', movieId: mv.id }); return; }
@@ -117,7 +133,7 @@ function movieCard(mv, { progress } = {}) {
   const title = ep ? ep.show : (mv.tmdb && mv.tmdb.title) || mv.title;
   const sub = ep ? epLabel(ep) : [mv.tmdb && mv.tmdb.year, fmt(mv.duration)].filter(Boolean).join(' · ');
   b.innerHTML = `<div class="tile-img">${img ? '' : Art.scene(Art.SCENES[Math.abs(hash(mv.id)) % Art.SCENES.length])}
-      ${isDone(mv) ? '<span class="tile-badge">✓ Watched</span>' : ''}
+      ${(() => { const v = coupleVerdict(mv.id); return v ? `<span class="tile-badge verdict-badge" title="${v.label}">${v.icon} ${v.avg.toFixed(1)}</span>` : isDone(mv) ? '<span class="tile-badge">✓ Watched</span>' : ''; })()}
       ${progress || inProgress(mv) ? `<span class="tile-bar"><i style="width:${Math.min(100, (p.pos / (mv.duration || p.duration)) * 100).toFixed(1)}%"></i></span>` : ''}
     </div>
     <div class="tile-meta"><b></b><span></span></div>`;
@@ -302,9 +318,9 @@ function renderDiary() {
       <div class="page-body">
         <div class="page-date">${new Date(e.at).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })}</div>
         <h3>${escapeHtml(e.title)}</h3>
-        ${Object.entries(e.ratings).map(([n, r]) => `<div class="page-rating"><span class="avatar">${Art.head(avatarFor({ name: n }))}</span>
-          <span><span class="stars">${'★'.repeat(r.stars)}<span class="dim">${'★'.repeat(5 - r.stars)}</span></span> <b>${escapeHtml(n)}</b>${r.text ? `<br><q>${escapeHtml(r.text)}</q>` : ''}</span></div>`).join('')}
-        ${mineRated ? '' : `<button class="ghost small" data-rate="${e.id}">★ Add your stars</button>`}
+        ${verdictHtml(e)}
+        ${Object.entries(e.ratings).map(([n, r]) => reviewHtml(e, n, r, mineRated)).join('')}
+        ${mineRated ? '' : `<button class="primary small" data-rate="${e.id}">★ ${Object.keys(e.ratings).length ? 'Add your review to reveal theirs' : 'Write your review'}</button>`}
         ${notes.length ? `<div class="muted small">💌 ${notes.length} love note${notes.length === 1 ? '' : 's'} in this one</div>` : ''}
         ${snaps.length ? `<div class="page-snaps">${snaps.map((s) => `<button class="snap" data-src="${s.file}"><img src="${s.file}" alt="Moment from ${escapeHtml(e.title)}" loading="lazy"></button>`).join('')}</div>` : ''}
       </div>
@@ -312,11 +328,38 @@ function renderDiary() {
   }).join('');
   for (const b of $('diaryList').querySelectorAll('[data-rate]')) b.onclick = () => {
     const e = fstate.diary.find((x) => x.id === b.dataset.rate);
-    if (e) openRateCard(e.id, e.title, e.movieId);
+    if (e) openRateCard(e.id, e.title, e.movieId, true);
   };
+  for (const b of $('diaryList').querySelectorAll('[data-peek]')) b.onclick = () => { peeked.add(b.dataset.peek); renderDiary(); };
   for (const b of $('diaryList').querySelectorAll('.snap')) b.onclick = () => { $('photoImg').src = b.dataset.src; $('photoView').classList.remove('hidden'); };
 }
 $('photoView').onclick = () => $('photoView').classList.add('hidden');
+
+/** One critic-style review: stars, the pull quote, highlights and the full review. */
+function reviewHtml(e, n, r, mineRated) {
+  const me = myName();
+  if (n !== me && !mineRated && !peeked.has(e.id)) {
+    return `<div class="review sealed"><span class="avatar">${Art.head(avatarFor({ name: n }))}</span>
+      <div><b>${escapeHtml(n)}'s review is in 🔒</b><span class="muted small">Add yours to reveal it, so you don't influence each other.</span>
+      <button class="link-btn" data-peek="${e.id}">Peek anyway</button></div></div>`;
+  }
+  return `<div class="review"><span class="avatar">${Art.head(avatarFor({ name: n }))}</span><div class="review-body">
+    <div class="review-head"><b>${escapeHtml(n === me ? 'You' : n)}</b><span class="stars">${starText(r.stars)}<span class="dim">${'★'.repeat(Math.floor(5 - r.stars))}</span></span><span class="muted small">${starVerdict(r.stars)}</span></div>
+    ${r.text ? `<blockquote class="pull">“${escapeHtml(r.text.replace(/^[“"']+|[”"']+$/g, ''))}”</blockquote>` : ''}
+    ${(r.tags || []).length ? `<div class="review-tags">${r.tags.map((t) => `<span>${escapeHtml(t)}</span>`).join('')}</div>` : ''}
+    ${r.review ? `<details class="full-review"><summary>Read the full review</summary><p>${escapeHtml(r.review).replace(/\n/g, '<br>')}</p></details>` : ''}
+    ${n === me ? `<button class="link-btn" data-rate="${e.id}">✏️ Edit my review</button>` : ''}${r.edited ? '<span class="muted small"> · edited</span>' : ''}
+  </div></div>`;
+}
+function verdictHtml(e) {
+  const rs = Object.values(e.ratings);
+  if (rs.length < 2 || (!e.ratings[myName()] && !peeked.has(e.id))) return '';
+  const s = rs.map((r) => r.stars);
+  const raw = s.reduce((a, b) => a + b, 0) / s.length;
+  const avg = Math.round(raw * 10) / 10;
+  const v = s.every((x) => x >= 4) ? ['💞', 'Couple\'s Choice'] : Math.max(...s) - Math.min(...s) >= 2 ? ['⚡', 'Split decision'] : s.every((x) => x <= 2) ? ['🙈', 'Not for us'] : ['👍', 'Good night in'];
+  return `<div class="verdict"><span class="verdict-score">${avg.toFixed(1)}</span><div><b>${v[0]} ${v[1]}</b><span class="muted small">Our score · ${starText(Math.round(raw * 2) / 2)}</span></div></div>`;
+}
 
 // ---- Pick together --------------------------------------------------------------------------
 function candidates() {

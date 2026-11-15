@@ -308,9 +308,15 @@
   <div id="rateCard" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="rateTitle">
     <div class="sheet rate-card">
       <div id="rateArt" class="rate-art"></div>
+      <div class="rate-kicker">🎬 Your review</div>
       <h2 id="rateTitle">How was it?</h2>
-      <div id="rateStars" class="rate-stars" role="radiogroup" aria-label="Stars"></div>
-      <input id="rateText" maxlength="200" placeholder="One line about it (optional)">
+      <div id="rateStars" class="rate-stars half" role="slider" tabindex="0" aria-label="Stars" aria-valuemin="0.5" aria-valuemax="5"></div>
+      <div id="rateVerdict" class="rate-verdict">Tap a star (tap its left half for ½)</div>
+      <label for="rateText" class="rate-label">Your quote <span class="muted">· the line critics get on the poster</span></label>
+      <input id="rateText" maxlength="160" placeholder="“A cosy little masterpiece.”">
+      <div id="rateTags" class="rate-tags" aria-label="Highlights"></div>
+      <details id="rateMore"><summary>✍️ Write a full review (optional)</summary>
+        <textarea id="rateReview" maxlength="2000" rows="5" placeholder="What did you love? What would you change? Favourite scene?"></textarea></details>
       <div class="row"><button id="rateSkip" class="ghost">Later</button><span class="spacer"></span><button id="rateSave" class="primary">Save to our diary</button></div>
     </div>
   </div>

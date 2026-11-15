@@ -427,11 +427,30 @@ module.exports = function createFeatures({ ROOT, LIBRARY, discover, config, save
         data.notes = data.notes.filter((n) => !(n.id === msg.id && n.from === c.name));
         changed('notes');
         return true;
+      case 'rateMovie':
       case 'rate': {
-        const e = data.diary.find((x) => x.id === msg.entryId);
+        // A review: half stars, a pull quote, an optional full review and highlight tags.
+        // Any movie can be reviewed any time; reviewing again edits your review.
+        let e = msg.entryId ? data.diary.find((x) => x.id === msg.entryId) : null;
+        if (!e && typeof msg.movieId === 'string') {
+          e = [...data.diary].reverse().find((x) => x.movieId === msg.movieId);
+          const mv = movieById(msg.movieId);
+          if (!e && mv) {
+            e = { id: id(), movieId: mv.id, title: mv.title, date: new Date().toISOString().slice(0, 10), at: Date.now(), minutes: Math.round((mv.duration || 0) / 60), ratings: {} };
+            data.diary.push(e);
+          }
+        }
         if (!e) return true;
-        e.ratings[c.name] = { stars: Math.max(1, Math.min(5, Number(msg.stars) || 0)), text: String(msg.text || '').trim().slice(0, 200), at: Date.now() };
-        logActivity('rate', c.name, `gave ${e.title} ${'★'.repeat(e.ratings[c.name].stars)}`, { movieId: e.movieId });
+        const stars = Math.max(0.5, Math.min(5, Math.round((Number(msg.stars) || 0) * 2) / 2));
+        const before = e.ratings[c.name];
+        e.ratings[c.name] = {
+          stars, text: String(msg.text || '').trim().slice(0, 160), review: String(msg.review || '').trim().slice(0, 2000),
+          tags: Array.isArray(msg.tags) ? msg.tags.map((t) => String(t).slice(0, 24)).slice(0, 8) : [],
+          at: before ? before.at : Date.now(), ...(before ? { edited: Date.now() } : {}),
+        };
+        const full = Math.floor(stars), half = stars % 1 ? '½' : '';
+        if (!before) logActivity('rate', c.name, `reviewed ${e.title}: ${'★'.repeat(full)}${half}${e.ratings[c.name].text ? ` “${e.ratings[c.name].text}”` : ''}`, { movieId: e.movieId });
+        if (!before && Object.keys(e.ratings).length === 1) notify({ title: '🎬 A new review is in', body: `${c.name} reviewed ${e.title}. Add yours to reveal it!`, except: c.name, evenIfOnline: true });
         changed('diary');
         return true;
       }

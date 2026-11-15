@@ -924,7 +924,7 @@ async function makePostcard(entryId) {
   for (const [n, r] of Object.entries(e.ratings).slice(0, 2)) {
     ctx.fillStyle = '#4a3326'; ctx.font = 'bold 34px system-ui, sans-serif'; ctx.fillText(n, 100, y);
     ctx.fillStyle = '#d7a23a'; ctx.font = '36px system-ui, sans-serif';
-    ctx.fillText('★'.repeat(r.stars) + '☆'.repeat(5 - r.stars), 100 + ctx.measureText(n).width + 50, y);
+    ctx.fillText(starText(r.stars) + '☆'.repeat(Math.floor(5 - r.stars)), 100 + ctx.measureText(n).width + 50, y);
     y += 46;
     if (r.text) { ctx.fillStyle = '#6b5446'; ctx.font = 'italic 30px Georgia, serif'; y = wrapText(ctx, `“${r.text}”`, 100, y, W - 200, 40, 2) + 10; }
     y += 14;
@@ -1029,6 +1029,14 @@ renderHome = function () { baseRenderHome(); renderMoods(); renderWishlist(); };
 const baseTileActions = tileActions;
 tileActions = function (mv) {
   const box = baseTileActions(mv);
+  const review = document.createElement('span');
+  review.className = 'tile-act';
+  review.setAttribute('role', 'button');
+  const mineR = [...fstate.diary].reverse().find((x) => x.movieId === mv.id && x.ratings[myName()]);
+  review.title = mineR ? 'Your review' : 'Review it';
+  review.textContent = mineR ? `★ ${mineR.ratings[myName()].stars}` : '★';
+  review.onclick = (e) => { e.stopPropagation(); openRateCard(mineR ? mineR.id : null, (mv.tmdb && mv.tmdb.title) || mv.title, mv.id, true); };
+  box.prepend(review);
   if (isDone(mv)) return box; // a surprise is for something you haven't seen
   const gift = document.createElement('span');
   gift.className = 'tile-act';
@@ -1071,8 +1079,8 @@ renderDiary = function () {
 
 // Rate card at the end: dressed-up art, the predictions revealed, and a quiz button.
 const baseOpenRateCard = openRateCard;
-openRateCard = async function (entryId, title, movieId) {
-  baseOpenRateCard(entryId, title, movieId);
+openRateCard = async function (entryId, title, movieId, manual) {
+  baseOpenRateCard(entryId, title, movieId, manual);
   if ($('rateCard').classList.contains('hidden')) return;
   $('rateArt').innerHTML = dressed(genresOf(movieId), 'love');
   try { const r = await fetch(`/api/f/state?me=${encodeURIComponent(myName())}`, { cache: 'no-store' }); if (r.ok) fstate = await r.json(); } catch { /* offline */ }
