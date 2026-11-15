@@ -10,6 +10,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
+const subfix = require('./subfix');
 
 const SUB_EXT = new Set(['.srt', '.vtt', '.ass', '.ssa', '.sub', '.txt']);
 const TEXT_CODECS = new Set(['subrip', 'srt', 'ass', 'ssa', 'webvtt', 'mov_text', 'text', 'microdvd', 'subviewer', 'stl', 'eia_608']);
@@ -121,13 +122,27 @@ async function convertSubtitles(items, movieFile, outDir, ffmpeg = 'ffmpeg', log
   // the whole file, so each separate extraction would read the entire file again).
   const tracks = planned.filter((p) => p.it.type === 'track' && Number.isInteger(p.it.stream));
   if (tracks.length) {
-    const args = ['-i', movieFile];
-    for (const t of tracks) args.push('-map', `0:${t.it.stream}`, '-f', 'webvtt', t.out);
-    try { await run(ffmpeg, args); } catch (e) {
+    // Anime-style (.ass) tracks are kept as they are and converted by us (see subfix.js):
+    // FFmpeg's own conversion duplicates layered lines and mixes signs into the dialogue.
+    const ffprobe = ffmpeg.replace(/ffmpeg(\.exe)?$/i, (m, ext) => `ffprobe${ext || ''}`);
+    const codecs = {};
+    try {
+      const r = spawnSync(ffprobe, ['-v', 'error', '-print_format', 'json', '-show_streams', '-select_streams', 's', movieFile], { encoding: 'utf8', windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
+      for (const st of JSON.parse(r.stdout).streams || []) codecs[st.index] = st.codec_name;
+    } catch { /* treat as plain text */ }
+    for (const t of tracks) t.ass = ['ass', 'ssa'].includes(codecs[t.it.stream]);
+    const outArgs = (t) => (t.ass ? ['-map', `0:${t.it.stream}`, '-c:s', 'copy', '-f', 'ass', `${t.out}.ass`] : ['-map', `0:${t.it.stream}`, '-f', 'webvtt', t.out]);
+    try { await run(ffmpeg, ['-i', movieFile, ...tracks.flatMap(outArgs)]); } catch (e) {
       // One bad track shouldn't sink the others: retry them one at a time.
       for (const t of tracks) {
-        try { await run(ffmpeg, ['-i', movieFile, '-map', `0:${t.it.stream}`, '-f', 'webvtt', t.out]); } catch (e2) { failed.add(t); log(`  Could not use subtitles "${t.label}": ${e2.message.split('\n')[0]}`); }
+        try { await run(ffmpeg, ['-i', movieFile, ...outArgs(t)]); } catch (e2) { failed.add(t); log(`  Could not use subtitles "${t.label}": ${e2.message.split('\n')[0]}`); }
       }
+    }
+    for (const t of tracks.filter((x) => x.ass && !failed.has(x))) {
+      try {
+        fs.writeFileSync(t.out, subfix.writeVtt(subfix.assToCues(fs.readFileSync(`${t.out}.ass`, 'utf8'))));
+      } catch (e) { failed.add(t); log(`  Could not use subtitles "${t.label}": ${e.message}`); }
+      fs.rmSync(`${t.out}.ass`, { force: true });
     }
   }
   for (const p of planned.filter((x) => x.it.type !== 'track')) {
@@ -137,7 +152,10 @@ async function convertSubtitles(items, movieFile, outDir, ffmpeg = 'ffmpeg', log
       // Older .srt files are often not UTF-8 (accents/Greek would come out garbled).
       const raw = fs.readFileSync(src);
       const enc = isUtf8(raw) ? [] : ['-sub_charenc', p.lang === 'el' ? 'CP1253' : p.lang === 'ru' ? 'CP1251' : 'CP1252'];
-      await run(ffmpeg, [...enc, '-i', src, '-f', 'webvtt', p.out]);
+      if (['.ass', '.ssa'].includes(path.extname(src).toLowerCase())) {
+        const text = isUtf8(raw) ? raw.toString('utf8') : new TextDecoder(p.lang === 'el' ? 'windows-1253' : p.lang === 'ru' ? 'windows-1251' : 'windows-1252').decode(raw);
+        fs.writeFileSync(p.out, subfix.writeVtt(subfix.assToCues(text)));
+      } else await run(ffmpeg, [...enc, '-i', src, '-f', 'webvtt', p.out]);
     } catch (e) { failed.add(p); log(`  Could not use subtitles "${p.label}": ${e.message.split('\n')[0]}`); }
   }
   const done = [];
@@ -146,6 +164,12 @@ async function convertSubtitles(items, movieFile, outDir, ffmpeg = 'ffmpeg', log
     let size = 0;
     try { size = fs.statSync(p.out).size; } catch { /* not written */ }
     if (size < 20) { fs.rmSync(p.out, { force: true }); log(`  Could not use subtitles "${p.label}": no subtitle lines found`); continue; }
+    // No blinking, duplicated or 1-frame lines.
+    try { subfix.cleanVttFile(p.out); } catch { /* leave as converted */ }
+    // A downloaded subtitle file may be made for a different release: line it up with the audio.
+    if (p.it.type === 'file' && movieFile && fs.existsSync(movieFile)) {
+      try { await subfix.syncToAudio(p.out, movieFile, ffmpeg, path.join(outDir, '.voice.json'), log); } catch (e) { log(`  Subtitle timing: couldn't check (${e.message})`); }
+    }
     done.push({ file: `subs/${p.name}`, label: p.label, lang: p.lang });
     log(`  Subtitles: ${p.label}`);
   }

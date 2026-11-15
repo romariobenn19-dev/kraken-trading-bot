@@ -352,6 +352,10 @@ async function openMovie(id) {
       // Don't start downloading until we've picked the starting quality (see setupQuality).
       autoStartLoad: false,
       capLevelToPlayerSize: false,
+      // Never show closed captions hidden inside the video: they'd fight with the real
+      // subtitles (different timing, popping on and off).
+      enableCEA708Captions: false,
+      renderTextTracksNatively: true,
       // Be a bit conservative so quality doesn't flip-flop on a shaky connection.
       // Start from this device's last measured speed (or assume a decent connection).
       abrEwmaDefaultEstimate: savedBandwidth() || 8_000_000,
@@ -1286,6 +1290,12 @@ function subsOf(mv) {
 }
 const subKey = (s) => `${s.lang}|${s.label}`;
 const appliedOffset = new WeakMap();
+let currentSubKey = 'off';
+// A caption track added by anything other than us (e.g. hidden captions in a stream) stays off.
+video.textTracks.addEventListener('addtrack', (e) => {
+  const ours = [...video.querySelectorAll('track')].some((el) => el.track === e.track);
+  if (!ours) e.track.mode = 'disabled';
+});
 let subOffset = 0;
 
 function buildSubtitleTracks(mv) {
@@ -1294,12 +1304,20 @@ function buildSubtitleTracks(mv) {
   $('subsBtn').classList.toggle('hidden', !subs.length);
   $('subsMenu').classList.add('hidden');
   subOffset = Number(store.get(`mn_suboff_${mv.id}`)) || 0;
+  // The laptop re-timed these subtitles: a hand nudge made for the old timing would now push them off.
+  const version = String(Math.max(0, ...subs.map((x) => x.retimed || 0)));
+  if (subOffset && store.get(`mn_subv_${mv.id}`) !== version && version !== '0') {
+    subOffset = 0;
+    store.set(`mn_suboff_${mv.id}`, '0');
+    toast('Subtitle timing was fixed automatically, so your timing nudge was reset.', 6000);
+  }
+  store.set(`mn_subv_${mv.id}`, version);
   for (const sub of subs) {
     const tr = document.createElement('track');
     tr.kind = 'subtitles';
     tr.label = sub.label;
     tr.srclang = sub.lang && sub.lang !== 'und' ? sub.lang : 'en';
-    tr.src = `/library/${encodeURIComponent(mv.id)}/${sub.file}`;
+    tr.src = `/library/${encodeURIComponent(mv.id)}/${sub.file}${sub.v ? `?v=${sub.v}` : ''}`;
     tr.dataset.key = subKey(sub);
     tr.addEventListener('load', applySubOffset);
     video.appendChild(tr);
@@ -1319,10 +1337,13 @@ function preferredSub(subs) {
 }
 
 function selectSub(key) {
-  [...video.querySelectorAll('track')].forEach((el, i) => {
-    const t = video.textTracks[i];
-    if (t) t.mode = el.dataset.key === key ? 'showing' : 'disabled';
-  });
+  // Match tracks by label/language, not position: anything else that appears is switched off.
+  const els = [...video.querySelectorAll('track')];
+  for (const t of video.textTracks) {
+    const el = els.find((e) => e.track === t);
+    t.mode = el && el.dataset.key === key ? 'showing' : 'disabled';
+  }
+  currentSubKey = key;
   $('subsBtn').classList.toggle('on', key !== 'off');
   setTimeout(applySubOffset, 300);
 }

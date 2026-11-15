@@ -179,7 +179,27 @@ function pickEncoders(choice) {
  * `best` = the version people will actually watch: slowest, sharpest settings.
  * Backup versions (only used during Wi-Fi dips) use faster settings - roughly 2-3x quicker.
  */
+/**
+ * Old-style TV captions hidden in the video picture data would otherwise be copied into
+ * every version, and the player would show them on top of (and out of step with) the real
+ * subtitles. Turn that off wherever the encoder has the switch.
+ */
+const a53Support = {};
+function noHiddenCaptions(args) {
+  const i = args.indexOf('-c:v');
+  const name = i >= 0 ? args[i + 1] : null;
+  if (!name) return args;
+  if (!(name in a53Support)) {
+    const r = spawnSync(FFMPEG, ['-hide_banner', '-h', `encoder=${name}`], { encoding: 'utf8', windowsHide: true });
+    a53Support[name] = /\ba53cc\b/.test(`${r.stdout || ''}${r.stderr || ''}`);
+  }
+  return a53Support[name] ? [...args, '-a53cc', '0'] : args;
+}
+
 function videoCodecArgs(encName, codecFamily, kbps, gop, best) {
+  return noHiddenCaptions(videoCodecArgsRaw(encName, codecFamily, kbps, gop, best));
+}
+function videoCodecArgsRaw(encName, codecFamily, kbps, gop, best) {
   const b = `${kbps}k`, max = `${Math.round(kbps * 1.6)}k`, buf = `${Math.round(kbps * 2)}k`;
   const rate = ['-b:v', b, '-maxrate', max, '-bufsize', buf];
   const hevc = codecFamily === 'hevc';
@@ -442,6 +462,8 @@ async function main() {
 
   const done = { hevc: [], avc: [] };
   const preparedAt = (() => { try { return JSON.parse(fs.readFileSync(path.join(outDir, 'meta.json'), 'utf8')).preparedAt; } catch { return new Date().toISOString(); } })();
+  // Subtitles made by this version are already tidy; kept ones keep their earlier state.
+  const subsFixed = !opts.keepSubs ? 1 : (() => { try { return JSON.parse(fs.readFileSync(path.join(outDir, 'meta.json'), 'utf8')).subsFixed || 0; } catch { return 0; } })();
   step.of = jobs.length;
 
   const nameOf = (job) => `${job.label}${job.tag === 'hq' ? ' HQ' : job.tag === 'lite' ? ' Lite' : ''} ${job.family.toUpperCase()}`;
@@ -545,6 +567,7 @@ async function main() {
       partial: !final,
       converting: growing.length > 0,
       preparedAt: preparedAt,
+      subsFixed,
     };
     writeAtomic(path.join(outDir, 'meta.json'), JSON.stringify(meta, null, 2));
     emit({ ready: true, id, partial: !final });

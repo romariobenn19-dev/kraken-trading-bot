@@ -133,6 +133,10 @@ Good to know:
 - **While watching:** tap **CC** to pick a language or turn them off, change the **text size**, or nudge the **timing** by ½ second if the words are early or late. Each of you sets this on your own device, and it's remembered (timing per movie).
 - **Add subtitles to a movie you already have:** on the laptop, click **CC+** (or **CC 2**…) on its card. Pick a track from the original file, or **Choose a subtitle file…**. It takes seconds, and they show up even mid-movie.
 - Old `.srt` files in non-UTF-8 encodings (common for Greek and accented languages) are converted correctly.
+- **Downloaded subtitle files are lined up automatically.** The laptop listens to when people talk in the movie and moves the subtitles to match, including files made for a different release (a delay, or a 25 fps vs 23.976 fps speed difference). If it can't find a clear match, it leaves the file alone; the ½-second timing nudge is still there for fine-tuning.
+- **Anime subtitles (.ass) are converted cleanly:** no doubled lines, no lines blinking off and on, and on-screen signs and song lyrics go to the top so the dialogue stays put.
+- Hidden TV captions inside some video files are ignored, so they can't pop up on top of your subtitles.
+- Movies added before version 2.7 get their subtitles repaired once, in the background, a minute after Movie Night starts.
 
 ## Updating
 

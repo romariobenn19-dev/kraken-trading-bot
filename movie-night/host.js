@@ -535,7 +535,10 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     isQueued: (f) => jobs.some((j) => j.file === f && (j.status === 'queued' || j.status === 'running')),
     skipAvcDefault: () => hevcDevices().hevcConfirmed,
     subtitleFilesAdded: async (id, items) => {
-      const made = await subtitles.convertSubtitles(items, null, path.join(LIBRARY, id), FFMPEG);
+      // The movie file lets a downloaded subtitle be lined up with the audio.
+      let movieFile = null;
+      try { movieFile = JSON.parse(fs.readFileSync(path.join(LIBRARY, id, '.source.json'), 'utf8')).file; } catch { /* only the files */ }
+      const made = await subtitles.convertSubtitles(items, movieFile, path.join(LIBRARY, id), FFMPEG);
       if (made.length) { subtitles.addToMeta(path.join(LIBRARY, id), made); libraryChanged(); }
       return made.length;
     },
@@ -618,6 +621,61 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     for (const j of saved) if (j.file && fs.existsSync(j.file)) enqueue(j);
   } catch { /* nothing saved */ }
   setTimeout(topUpOldMovies, 20000).unref();
+
+  /**
+   * One-time repair of subtitles made by older versions: anime (.ass) tracks are converted
+   * again from the original file, every subtitle is tidied (no blinking/duplicate lines),
+   * and downloaded subtitle files are lined up with the audio. One movie at a time.
+   */
+  const subfix = require('./subfix');
+  async function repairOldSubtitles() {
+    let ids = [];
+    try { ids = fs.readdirSync(LIBRARY); } catch { return; }
+    let changedAny = false;
+    for (const id of ids) {
+      while (runningJobs.size) await new Promise((r) => setTimeout(r, 60000)); // let conversions go first
+      const dir = path.join(LIBRARY, id);
+      let meta;
+      try { meta = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8')); } catch { continue; }
+      const subs = subtitles.normalizeMetaSubs(meta.subtitles);
+      if (meta.subsFixed >= 1 || !subs.length || meta.converting || jobs.some((j) => j.movieId === id && ['queued', 'running'].includes(j.status))) continue;
+      let file = null;
+      try { file = JSON.parse(fs.readFileSync(path.join(dir, '.source.json'), 'utf8')).file; } catch { /* no original */ }
+      if (file && !fs.existsSync(file)) file = null;
+      const sources = file ? subtitles.findSubtitleSources(file, FFPROBE) : { tracks: [] };
+      for (const sub of subs) {
+        const out = path.join(dir, sub.file);
+        if (!fs.existsSync(out)) continue;
+        const track = sources.tracks.find((t) => t.label === sub.label && t.textBased);
+        try {
+          if (track && ['ass', 'ssa'].includes(track.codec)) {
+            const tmp = path.join(os.tmpdir(), `mn-subfix-${id}`);
+            fs.mkdirSync(tmp, { recursive: true });
+            const made = await subtitles.convertSubtitles([{ type: 'track', stream: track.stream, label: sub.label, lang: sub.lang }], file, tmp, FFMPEG);
+            if (made[0]) fs.copyFileSync(path.join(tmp, made[0].file), out);
+            fs.rmSync(tmp, { recursive: true, force: true });
+          } else {
+            subfix.cleanVttFile(out);
+            if (!track && file) {
+              const r = await subfix.syncToAudio(out, file, FFMPEG, path.join(dir, '.voice.json'));
+              if (r.changed) sub.retimed = Date.now();
+            }
+          }
+          sub.v = Date.now();
+        } catch (e) { console.log(`  Subtitle repair skipped for ${meta.title}: ${e.message}`); }
+      }
+      try {
+        const fresh = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8'));
+        fresh.subtitles = subtitles.normalizeMetaSubs(fresh.subtitles).map((x) => { const s2 = subs.find((y) => y.file === x.file); return s2 && s2.v ? { ...x, v: s2.v, ...(s2.retimed ? { retimed: s2.retimed } : {}) } : x; });
+        fresh.subsFixed = 1;
+        fs.writeFileSync(path.join(dir, 'meta.json.tmp'), JSON.stringify(fresh, null, 2));
+        fs.renameSync(path.join(dir, 'meta.json.tmp'), path.join(dir, 'meta.json'));
+        changedAny = true;
+      } catch { /* try again next start */ }
+      if (changedAny) libraryChanged();
+    }
+  }
+  setTimeout(() => repairOldSubtitles().catch((e) => console.log(`  Subtitle repair stopped: ${e.message}`)), 45000).unref();
 
   return { handle, onStatus, publicJobs, repairMissing, prioritize, pendingMovies, isBusy: () => runningJobs.size > 0, ffmpeg: FFMPEG };
 };
