@@ -159,6 +159,16 @@ video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: con
 video::cue { font-size: clamp(16px, 3.2vw, 32px); background: rgba(0,0,0,.6); line-height: 1.3; }
 #stage.subs-s video::cue { font-size: clamp(13px, 2.3vw, 24px); }
 #stage.subs-l video::cue { font-size: clamp(20px, 4.4vw, 46px); }
+/* Subtitles drawn by Movie Night (always visible, also in full screen) */
+.subs-layer { position: absolute; inset: 0; pointer-events: none; z-index: 2; display: flex; flex-direction: column; justify-content: space-between;
+  padding: 4% 6% 5%; font-size: clamp(16px, 3.2vw, 32px); line-height: 1.3; text-align: center; transition: padding-bottom .25s ease; }
+#stage.subs-s .subs-layer { font-size: clamp(13px, 2.3vw, 24px); }
+#stage.subs-l .subs-layer { font-size: clamp(20px, 4.4vw, 46px); }
+.subs-top, .subs-bottom { display: flex; flex-direction: column; align-items: center; gap: .15em; }
+.sub-line { display: inline; max-width: 100%; color: #fff; background: rgba(0, 0, 0, .62); padding: .08em .45em; border-radius: .2em;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone; text-shadow: 0 1px 2px rgba(0,0,0,.8); font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-weight: 500; }
+/* Controls showing: lift the lines above them */
+#stage:has(.chrome:not(.off)) .subs-layer { padding-bottom: max(5%, 150px); }
 
 .chrome { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: space-between;
   transition: opacity .25s; pointer-events: none; }

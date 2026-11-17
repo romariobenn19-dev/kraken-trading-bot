@@ -1215,7 +1215,7 @@ function renderLoginChips() {
 /** On the laptop: a name we're not sure about joined -> ask once who it is. */
 const askedWho = new Set();
 function askWhoIsWho() {
-  if (!isHost || !$('settings').classList.contains('hidden') || $('whoAsk')) return;
+  if (!isHost || meta || !$('settings').classList.contains('hidden') || $('whoAsk')) return; // not over a movie
   const dismissed = (store.get('mn_whoDismissed') || '').split('|');
   const assigned = [...(personalInfo.himLogins || []), ...(personalInfo.herLogins || []), ...(personalInfo.others || [])].map((x) => x.toLowerCase());
   const online = peers.map((p) => p.name).filter((n) => n && !/^(host|guest)$/i.test(n));
@@ -1416,12 +1416,47 @@ function selectSub(key) {
   const els = [...video.querySelectorAll('track')];
   for (const t of video.textTracks) {
     const el = els.find((e) => e.track === t);
-    t.mode = el && el.dataset.key === key ? 'showing' : 'disabled';
+    // 'hidden': the browser still times the lines, but we draw them ourselves (see drawSubs):
+    // the browser's own drawing vanishes in full screen once the controls fade away.
+    t.mode = el && el.dataset.key === key ? 'hidden' : 'disabled';
+    if (el && el.dataset.key === key && !t._mnHooked) { t._mnHooked = true; t.addEventListener('cuechange', drawSubs); }
   }
   currentSubKey = key;
+  drawSubs();
   $('subsBtn').classList.toggle('on', key !== 'off');
   setTimeout(applySubOffset, 300);
 }
+
+/**
+ * Subtitles are drawn by Movie Night as text over the picture. (When nothing else is on
+ * screen, Chrome hands a full-screen video straight to the graphics chip and its own
+ * subtitles can disappear until the controls are shown again.)
+ */
+let lastSubsHtml = '';
+function drawSubs() {
+  const layer = $('subsLayer');
+  if (!layer) return;
+  const els = [...video.querySelectorAll('track')];
+  const el = currentSubKey === 'off' ? null : els.find((e) => e.dataset.key === currentSubKey);
+  const cues = el && el.track && el.track.mode !== 'disabled' && el.track.activeCues ? [...el.track.activeCues] : [];
+  const top = [], bottom = [];
+  for (const c of cues) {
+    let frag;
+    try { frag = c.getCueAsHTML(); } catch { frag = document.createTextNode(c.text || ''); }
+    const box = document.createElement('div');
+    box.appendChild(frag);
+    // Signs and song lyrics placed at the top (line under 50%) stay at the top.
+    const atTop = typeof c.line === 'number' && c.snapToLines === false && c.line < 50;
+    (atTop ? top : bottom).push(`<span class="sub-line">${box.innerHTML.replace(/\n/g, '<br>')}</span>`);
+  }
+  const html = `${top.join('')}|${bottom.join('')}`;
+  if (html === lastSubsHtml) return;
+  lastSubsHtml = html;
+  layer.querySelector('.subs-top').innerHTML = top.join('');
+  layer.querySelector('.subs-bottom').innerHTML = bottom.join('');
+}
+video.addEventListener('timeupdate', drawSubs);
+video.addEventListener('seeked', drawSubs);
 
 /** Shift every subtitle line by the timing nudge (positive = later). */
 function applySubOffset() {
@@ -1435,6 +1470,7 @@ function applySubOffset() {
     }
     appliedOffset.set(t, subOffset);
   }
+  drawSubs();
 }
 
 function applySubSize() {
@@ -1455,7 +1491,7 @@ function toggleSubsMenu(force) {
 function renderSubsMenu() {
   const menu = $('subsMenu');
   const subs = subsOf(meta);
-  const current = [...video.querySelectorAll('track')].find((el, i) => video.textTracks[i] && video.textTracks[i].mode === 'showing');
+  const current = [...video.querySelectorAll('track')].find((el) => el.track && el.track.mode !== 'disabled');
   const currentKey = current ? current.dataset.key : 'off';
   const size = store.get('mn_subSize') || 'm';
   const off = subOffset === 0 ? 'On time' : `${subOffset > 0 ? '+' : '−'}${Math.abs(subOffset).toFixed(1)}s ${subOffset > 0 ? 'later' : 'earlier'}`;
