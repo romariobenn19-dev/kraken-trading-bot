@@ -1,122 +1,227 @@
-/* Our World - poses made in code on top of the animations (wave, hug, kiss, slap, holding
- * hands, a jump when surprised), plus little sound effects. The arms are pointed in a
- * direction (e.g. "forward and a bit inward") and the joints work it out. */
+/* Our World - the together interactions, layered on top of the walk/idle animations.
+ *
+ * Hands go to real places (her back, his shoulders, her bum…) with two-bone IK: the shoulder,
+ * elbow and wrist work out how to bend so the hand lands on the target, with the elbow
+ * pointing a natural way. Heads turn and tilt, the upper body leans, and every move has a
+ * wind-up, the action, and a settle. Also: little sounds. */
 import * as THREE from 'three';
 
-const Y = new THREE.Vector3(0, 1, 0);
-const tq = new THREE.Quaternion(), tq2 = new THREE.Quaternion(), tv = new THREE.Vector3();
+const UP = new THREE.Vector3(0, 1, 0);
+const v1 = new THREE.Vector3(), v2 = new THREE.Vector3(), v3 = new THREE.Vector3(), v4 = new THREE.Vector3();
+const q1 = new THREE.Quaternion(), q2 = new THREE.Quaternion(), qI = new THREE.Quaternion();
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const ease = (t) => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
+const easeOut = (t) => 1 - Math.pow(1 - clamp(t, 0, 1), 3);
+const wpos = (o, out = new THREE.Vector3()) => o.getWorldPosition(out);
 
-/** Point a bone (its +Y runs along the limb) toward a direction in the world. */
-function aim(bone, dir, w) {
-  if (!bone || w <= 0) return;
-  bone.parent.updateWorldMatrix(true, false);
-  bone.parent.getWorldQuaternion(tq);
-  tv.copy(dir).normalize().applyQuaternion(tq.invert());
-  tq2.setFromUnitVectors(Y, tv);
-  bone.quaternion.slerp(tq2, w);
+/** Turn a bone (in world space) so that `cur` direction becomes `des`, blended by w. Works whatever way the bone's axes point. */
+function rotateTo(bone, cur, des, w) {
+  if (!bone || w <= 0 || cur.lengthSq() < 1e-8 || des.lengthSq() < 1e-8) return;
+  q1.setFromUnitVectors(cur.clone().normalize(), des.clone().normalize());
+  if (w < 1) q1.slerpQuaternions(qI, q1, w);
+  bone.getWorldQuaternion(q2);
+  q2.premultiply(q1);                                    // new world rotation
+  bone.parent.getWorldQuaternion(v4._q || (v4._q = new THREE.Quaternion()));
+  bone.quaternion.copy(v4._q.invert().multiply(q2));
   bone.updateMatrixWorld(true);
 }
-/** Turn a bone around an axis given in the world. */
+/** Turn a bone around a world axis. */
 function turn(bone, axis, angle) {
   if (!bone || !angle) return;
-  bone.parent.updateWorldMatrix(true, false);
-  bone.parent.getWorldQuaternion(tq);
-  const local = tv.copy(axis).applyQuaternion(tq2.copy(tq).invert()).normalize();
-  bone.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(local, angle));
+  q1.setFromAxisAngle(axis, angle);
+  bone.getWorldQuaternion(q2);
+  q2.premultiply(q1);
+  bone.parent.getWorldQuaternion(v4._q || (v4._q = new THREE.Quaternion()));
+  bone.quaternion.copy(v4._q.invert().multiply(q2));
   bone.updateMatrixWorld(true);
 }
-const ease = (t) => t * t * (3 - 2 * t);
-/** How strongly a pose shows: fades in, holds, fades out. */
-function envelope(t, dur, fadeIn = 0.25, fadeOut = 0.3) {
-  if (t < 0 || t > dur) return 0;
-  return Math.min(ease(Math.min(1, t / fadeIn)), ease(Math.min(1, (dur - t) / fadeOut)));
+/**
+ * Two-bone IK: bend upper arm + forearm so the hand reaches `target`; the elbow bends toward
+ * `pole` (a direction). Blended in by w.
+ */
+function reach(arm, target, pole, w) {
+  if (!arm.upper || w <= 0) return;
+  const S = wpos(arm.upper, v1.clone()), E = wpos(arm.fore, v2.clone()), H = wpos(arm.hand, v3.clone());
+  const a = S.distanceTo(E), b = E.distanceTo(H);
+  const toT = target.clone().sub(S);
+  const d = clamp(toT.length(), Math.abs(a - b) + 1e-3, (a + b) * 0.995);
+  const dir = toT.normalize();
+  const x = (a * a - b * b + d * d) / (2 * d);
+  const h = Math.sqrt(Math.max(0, a * a - x * x));
+  const p = pole.clone().addScaledVector(dir, -pole.dot(dir));
+  if (p.lengthSq() < 1e-6) p.copy(UP).addScaledVector(dir, -UP.dot(dir));
+  p.normalize();
+  const elbow = S.clone().addScaledVector(dir, x).addScaledVector(p, h);
+  rotateTo(arm.upper, E.clone().sub(S), elbow.clone().sub(S), w);
+  const E2 = wpos(arm.fore, new THREE.Vector3()), H2 = wpos(arm.hand, new THREE.Vector3());
+  const T = S.clone().addScaledVector(dir, d);
+  rotateTo(arm.fore, H2.clone().sub(E2), T.sub(E2), w);
 }
 
-export const POSES = {
-  wave: 2.4, hug: 3.6, kiss: 2.6, slap: 0.6, jump: 0.9, hands: Infinity, cheer: 2.0,
-};
+/** How long each interaction lasts (seconds). */
+export const POSES = { wave: 2.8, hug: 4.6, kiss: 3.8, slap: 1.25, slapped: 1.9, hands: Infinity };
 
-/** Start a pose on an avatar (it plays on top of walking/idle). */
 export function pose(avatar, kind, opts = {}) {
   avatar.poses = (avatar.poses || []).filter((p) => p.kind !== kind);
-  avatar.poses.push({ kind, start: performance.now() / 1000, dur: opts.dur || POSES[kind] || 2, side: opts.side || 1 });
+  avatar.poses.push({ kind, start: performance.now() / 1000, dur: opts.dur || POSES[kind] || 2, partner: opts.partner || null, side: opts.side || 1 });
 }
 export function stopPose(avatar, kind) { avatar.poses = (avatar.poses || []).filter((p) => p.kind !== kind); }
+export const hasPose = (avatar, kind) => !!(avatar.poses || []).some((p) => p.kind === kind);
 
-/** Apply the poses after the animation has been updated for this frame. */
-export function applyPoses(avatar) {
-  if (!avatar.poses || !avatar.poses.length) { avatar.root.children[0].position.y = 0; return; }
-  const now = performance.now() / 1000;
-  avatar.poses = avatar.poses.filter((p) => now - p.start <= p.dur);
-  const b = avatar.bones || (avatar.bones = {
-    rArm: avatar.model.getObjectByName('mixamorigRightArm'), rFore: avatar.model.getObjectByName('mixamorigRightForeArm'),
-    lArm: avatar.model.getObjectByName('mixamorigLeftArm'), lFore: avatar.model.getObjectByName('mixamorigLeftForeArm'),
-    spine: avatar.model.getObjectByName('mixamorigSpine2'), head: avatar.model.getObjectByName('mixamorigHead'),
-  });
+function rig(avatar) {
+  if (avatar.rig) return avatar.rig;
+  const g = (n) => avatar.model.getObjectByName(`mixamorig${n}`);
+  avatar.rig = {
+    hips: g('Hips'), spine: g('Spine1'), chest: g('Spine2'), neck: g('Neck'), head: g('Head'),
+    R: { upper: g('RightArm'), fore: g('RightForeArm'), hand: g('RightHand'), shoulder: g('RightShoulder') },
+    L: { upper: g('LeftArm'), fore: g('LeftForeArm'), hand: g('LeftHand'), shoulder: g('LeftShoulder') },
+  };
+  return avatar.rig;
+}
+/** Facing vectors from the avatar's heading. */
+function frame(avatar) {
   const h = avatar.root.rotation.y;
-  const f = new THREE.Vector3(Math.sin(h), 0, Math.cos(h));      // forward
-  const r = new THREE.Vector3(-Math.cos(h), 0, Math.sin(h));     // the avatar's right
-  const u = Y;
-  const mix = (...parts) => parts.reduce((acc, [v, k]) => acc.addScaledVector(v, k), new THREE.Vector3());
-  let lift = 0;
+  return { f: new THREE.Vector3(Math.sin(h), 0, Math.cos(h)), r: new THREE.Vector3(-Math.cos(h), 0, Math.sin(h)) };
+}
+/** A smooth in-hold-out weight for a pose. */
+function weight(t, dur, fin = 0.4, fout = 0.45) {
+  if (t < 0 || t > dur) return 0;
+  return Math.min(ease(t / fin), ease((dur - t) / fout));
+}
+
+/**
+ * Apply this frame's interaction poses to an avatar (after its animation has been updated).
+ * find(name) returns the avatar of the person they're with.
+ */
+export function applyPoses(avatar, find) {
+  const body = avatar.root.children[0];
+  if (!avatar.poses || !avatar.poses.length) { body.position.set(0, 0, 0); return; }
+  const now = performance.now() / 1000;
+  const frozen = typeof window.__freezePose === 'number' ? window.__freezePose : null; // for testing
+  if (frozen === null) avatar.poses = avatar.poses.filter((p) => now - p.start <= p.dur);
+  const R = rig(avatar);
+  const { f, r } = frame(avatar);
+  const isHim = avatar.kind === 'him';
+  let lift = 0, push = 0;
   avatar.model.updateMatrixWorld(true);
   for (const p of avatar.poses) {
-    const t = now - p.start;
-    const w = envelope(t, p.dur);
+    const t = frozen !== null ? Math.min(frozen, p.dur === Infinity ? frozen : p.dur - 0.5) : now - p.start;
+    const w = weight(t, p.dur);
+    const other = p.partner ? find(p.partner) : null;
+    const O = other ? rig(other) : null;
+    if (other) other.model.updateMatrixWorld(true);
     switch (p.kind) {
       case 'wave': {
-        aim(b.rArm, mix([r, 0.55], [u, 1.0], [f, 0.15]), w);
-        aim(b.rFore, mix([u, 1], [r, 0.45 * Math.sin(t * 11)]), w);
-        break;
-      }
-      case 'cheer': {
-        aim(b.rArm, mix([r, 0.3], [u, 1]), w); aim(b.rFore, mix([u, 1], [r, 0.1]), w);
-        aim(b.lArm, mix([r, -0.3], [u, 1]), w); aim(b.lFore, mix([u, 1], [r, -0.1]), w);
-        lift = Math.max(lift, Math.abs(Math.sin(t * 7)) * 0.12 * w);
+        // Upper arm out to the side and up, forearm up, the hand swinging from the elbow.
+        const sh = wpos(R.R.upper, new THREE.Vector3());
+        const swing = Math.sin(Math.max(0, t - 0.35) * 9) * 0.13 * ease((t - 0.3) / 0.3);
+        // Hand up beside the head, a little forward, palm out; the elbow points down and out.
+        const target = sh.clone().addScaledVector(UP, 0.32).addScaledVector(r, 0.2 + swing).addScaledVector(f, 0.2);
+        reach(R.R, target, r.clone().multiplyScalar(0.5).addScaledVector(UP, -1).addScaledVector(f, 0.15), w);
+        turn(R.head, UP, -0.12 * w);
         break;
       }
       case 'hug': {
-        aim(b.rArm, mix([f, 1], [r, 0.35], [u, 0.1]), w); aim(b.rFore, mix([f, 0.35], [r, -1]), w);
-        aim(b.lArm, mix([f, 1], [r, -0.35], [u, 0.12]), w); aim(b.lFore, mix([f, 0.35], [r, 1]), w);
-        turn(b.spine, r, 0.12 * w);
-        turn(b.head, u, 0.35 * w);
+        if (!O) break;
+        // Arms around their back: one higher (over the shoulder), one lower (round the waist).
+        const { f: of } = frame(other);
+        const back = of.clone().negate();
+        const chest = wpos(O.chest, new THREE.Vector3()), waist = wpos(O.spine, new THREE.Vector3());
+        const hi = isHim ? 0 : 0.08;
+        const tR = (isHim ? waist : chest).clone().addScaledVector(back, 0.12).addScaledVector(r, -0.04).addScaledVector(UP, hi);
+        const tL = (isHim ? chest : waist).clone().addScaledVector(back, 0.12).addScaledVector(r, 0.04).addScaledVector(UP, -hi);
+        reach(R.R, tR, r.clone().addScaledVector(UP, -0.4).addScaledVector(f, -0.2), w);
+        reach(R.L, tL, r.clone().negate().addScaledVector(UP, -0.4).addScaledVector(f, -0.2), w);
+        // Lean in, head to the side resting on the shoulder, and a gentle sway.
+        turn(R.chest, r, 0.14 * w);
+        turn(R.head, UP, (isHim ? 0.55 : -0.55) * w);
+        turn(R.head, f, (isHim ? -0.12 : 0.12) * w);
+        turn(R.hips, UP, Math.sin(t * 1.6) * 0.06 * w);
         break;
       }
       case 'kiss': {
-        turn(b.spine, r, 0.2 * w);
-        turn(b.head, r, 0.12 * w);
-        aim(b.rArm, mix([f, 0.8], [r, 0.3], [u, -0.3]), w * 0.8); aim(b.rFore, mix([f, 0.6], [r, -0.8], [u, 0.4]), w * 0.8);
-        aim(b.lArm, mix([f, 0.8], [r, -0.3], [u, -0.3]), w * 0.8); aim(b.lFore, mix([f, 0.6], [r, 0.8], [u, 0.4]), w * 0.8);
+        if (!O) break;
+        // Lean in until the faces meet; heads tilt opposite ways; hands on waist / shoulders.
+        const myHead = wpos(R.head, new THREE.Vector3()), theirHead = wpos(O.head, new THREE.Vector3());
+        const gap = Math.hypot(theirHead.x - myHead.x, theirHead.z - myHead.z);
+        const want = 0.11;                                       // forehead-to-forehead distance at the kiss
+        const lean = clamp(Math.atan2(Math.max(0, gap - want) * 0.5, 0.55), 0, 0.42) * w;
+        turn(R.spine, r, lean * 0.45);
+        turn(R.chest, r, lean * 0.55);
+        // Taller one tips the head down, shorter one up; both tilt to the side.
+        const dy = theirHead.y - myHead.y;
+        turn(R.head, r, clamp(-dy * 1.2, -0.3, 0.3) * w);
+        turn(R.head, f, (isHim ? 0.32 : -0.32) * w);
+        const ow = wpos(O.spine, new THREE.Vector3()), os = wpos(O.chest, new THREE.Vector3());
+        if (isHim) {                                             // hands on her waist
+          reach(R.R, ow.clone().addScaledVector(r, -0.13).addScaledVector(f, -0.02), r.clone().addScaledVector(UP, -0.6), w);
+          reach(R.L, ow.clone().addScaledVector(r, 0.13).addScaledVector(f, -0.02), r.clone().negate().addScaledVector(UP, -0.6), w);
+        } else {                                                 // hands on his shoulders
+          reach(R.R, os.clone().addScaledVector(UP, 0.17).addScaledVector(r, -0.17), r.clone().addScaledVector(UP, -0.7), w);
+          reach(R.L, os.clone().addScaledVector(UP, 0.17).addScaledVector(r, 0.17), r.clone().negate().addScaledVector(UP, -0.7), w);
+          lift = Math.max(lift, 0.04 * w);                        // up on her toes a little
+        }
         break;
       }
       case 'slap': {
-        // A quick swing of the right hand, back then forward and low.
-        const k = Math.min(1, t / 0.28);
-        const back = mix([r, 0.45], [f, -0.6], [u, -0.2]), front = mix([r, 0.05], [f, 0.9], [u, -0.55]);
-        aim(b.rArm, back.lerp(front, ease(k)), w);
-        aim(b.rFore, mix([f, 0.6], [u, -0.6], [r, -0.25]), w);
-        turn(b.spine, u, (-0.35 + 0.6 * ease(k)) * w);
+        if (!O) break;
+        // Wind up behind, swing, contact on her bum, a little follow-through, back to rest.
+        const { f: of } = frame(other);
+        const bum = wpos(O.hips, new THREE.Vector3()).addScaledVector(of, -0.17).addScaledVector(UP, -0.06);
+        const sh = wpos(R.R.upper, new THREE.Vector3());
+        const windup = sh.clone().addScaledVector(f, -0.28).addScaledVector(r, 0.32).addScaledVector(UP, -0.05);
+        const through = bum.clone().addScaledVector(f, 0.12).addScaledVector(UP, -0.03);
+        let target;
+        if (t < 0.32) target = windup.clone().lerp(bum, 0); // wind-up
+        else if (t < 0.45) target = windup.clone().lerp(bum, easeOut((t - 0.32) / 0.13));
+        else if (t < 0.6) target = bum.clone().lerp(through, ease((t - 0.45) / 0.15));
+        else target = through;
+        const ww = t < 0.32 ? ease(t / 0.32) * w : w;
+        reach(R.R, target, r.clone().addScaledVector(UP, 0.2).addScaledVector(f, -0.5), ww);
+        turn(R.chest, UP, (t < 0.32 ? -0.32 * ease(t / 0.32) : -0.32 + 0.5 * easeOut((t - 0.32) / 0.18)) * w);
+        turn(R.head, UP, -0.35 * w);                              // looking at her
         break;
       }
-      case 'jump': {
-        // Surprised: a little hop and a look back over the shoulder.
-        lift = Math.max(lift, Math.sin(Math.min(1, t / 0.45) * Math.PI) * 0.18);
-        turn(b.head, u, 0.7 * w * p.side);
-        aim(b.rArm, mix([r, 0.5], [u, -0.6], [f, -0.4]), w * 0.6);
-        aim(b.lArm, mix([r, -0.5], [u, -0.6], [f, -0.4]), w * 0.6);
+      case 'slapped': {
+        // Contact at 0.45s: a jolt forward, a hop, a hand flies to her bum, she looks back at him.
+        const tc = t - 0.45;
+        if (tc < 0) break;
+        const jolt = Math.sin(clamp(tc / 0.35, 0, 1) * Math.PI);
+        push = Math.max(push, jolt * 0.08);
+        lift = Math.max(lift, Math.sin(clamp(tc / 0.4, 0, 1) * Math.PI) * 0.13);
+        turn(R.hips, r, -0.18 * jolt);
+        const ww = ease(tc / 0.2) * weight(t, p.dur, 0.1, 0.5);
+        // side -1: he's on her right, so her right hand goes to her right cheek and she looks right.
+        const bum = wpos(R.hips, new THREE.Vector3()).addScaledVector(f, -0.16).addScaledVector(UP, -0.05).addScaledVector(r, -0.07 * p.side);
+        reach(p.side < 0 ? R.R : R.L, bum, (p.side < 0 ? r.clone() : r.clone().negate()).addScaledVector(f, -0.6), ww);
+        turn(R.chest, UP, 0.35 * p.side * ww);
+        turn(R.head, UP, 0.75 * p.side * ww);
+        turn(R.head, r, -0.15 * ww);
         break;
       }
       case 'hands': {
-        // Arm down and out toward the person beside you (side: +1 = right hand, -1 = left).
-        const s = p.side;
-        if (s > 0) { aim(b.rArm, mix([u, -1], [r, 0.42], [f, 0.12]), w); aim(b.rFore, mix([u, -1], [r, 0.3], [f, 0.25]), w); }
-        else { aim(b.lArm, mix([u, -1], [r, -0.42], [f, 0.12]), w); aim(b.lFore, mix([u, -1], [r, -0.3], [f, 0.25]), w); }
+        if (!O) break;
+        // Hands meet between you, at hip height, swinging a little as you walk.
+        const mine = p.side > 0 ? R.R : R.L, theirs = p.side > 0 ? O.L : O.R;
+        const m = wpos(R.hips, new THREE.Vector3()).add(wpos(O.hips, new THREE.Vector3())).multiplyScalar(0.5);
+        void theirs;
+        m.y -= 0.12;
+        m.addScaledVector(f, 0.06);
+        reach(mine, m, (p.side > 0 ? r : r.clone().negate()).clone().addScaledVector(f, -0.5).addScaledVector(UP, -0.3), w);
         break;
       }
       default:
     }
   }
-  avatar.root.children[0].position.y = lift;
+  body.position.set(f.x * push, lift, f.z * push);
+}
+
+/** A good camera for watching an interaction: from the side, close, framing both of you. */
+export function cinematic(kind) {
+  if (kind === 'hug' || kind === 'kiss') return { side: 1, dist: kind === 'kiss' ? 1.55 : 2.3, pitch: 0.05, height: kind === 'kiss' ? 1.58 : 1.3 };
+  // The slap: from behind her, a little to the side, at hip height (so you see the hand land).
+  if (kind === 'slap') return { behind: 0.5, dist: 2.0, pitch: 0.12, height: 0.95 };
+  return null;
 }
 
 // ---- Little sounds (made on the fly, no files) --------------------------------------------------
@@ -143,7 +248,6 @@ export function sound(kind) {
     out.gain.setValueAtTime(0.0001, t0); out.gain.exponentialRampToValueAtTime(0.35, t0 + 0.02); out.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.14);
     o.connect(out); o.start(t0); o.stop(t0 + 0.16);
   } else {
-    // soft chime (hug, holding hands)
     for (const [fq, dl] of [[660, 0], [880, 0.09], [1320, 0.18]]) {
       const o = a.createOscillator(); o.type = 'triangle'; o.frequency.value = fq;
       const g = a.createGain(); g.gain.setValueAtTime(0.0001, t0 + dl); g.gain.exponentialRampToValueAtTime(0.18, t0 + dl + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dl + 0.6);

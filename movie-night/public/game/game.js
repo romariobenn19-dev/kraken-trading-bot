@@ -14,7 +14,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { plantTrees } from './trees.js';
-import { pose, stopPose, applyPoses, sound } from './actions.js';
+import { pose, stopPose, applyPoses, sound, cinematic, POSES } from './actions.js';
 
 const $ = (id) => document.getElementById(id);
 const store = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private */ } } };
@@ -385,9 +385,12 @@ function bodyFrame(root) {
   const p = (n) => B[n].getWorldPosition(new THREE.Vector3());
   const right = p('mixamorigRightForeArm').sub(p('mixamorigRightArm')).normalize();
   const up = p('mixamorigHead').sub(p('mixamorigHips')).normalize();
-  const fwd = new THREE.Vector3().crossVectors(right, up).normalize(); // a person's front = right x up
-  const upO = new THREE.Vector3().crossVectors(fwd, right).normalize();
-  return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(right, upO, fwd));
+  // Facing +Z, a person's right hand is toward -X: so front = up x right, and the frame
+  // (left, up, front) is right-handed. (right x up pointed backwards: everyone walked backwards.)
+  const left = right.clone().negate();
+  const fwd = new THREE.Vector3().crossVectors(up, right).normalize();
+  const upO = new THREE.Vector3().crossVectors(fwd, left).normalize();
+  return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(left, upO, fwd));
 }
 const FRAME = { soldier: bodyFrame(soldier.scene), michelle: bodyFrame(michelle.scene) };
 /** Turn needed so a model faces +Z (the way the game expects) at rotation 0. */
@@ -555,46 +558,68 @@ $('tWave').onclick = () => doAct('wave'); $('dWave').onclick = () => doAct('wave
 for (const b of document.querySelectorAll('#acts [data-act]')) b.onclick = () => doAct(b.dataset.act);
 
 // ---- Together: hug, kiss, a cheeky slap, holding hands, waving ----------------------------
+const HUG_GAP = 0.3, KISS_GAP = 0.3; // metres between you (chest to chest)
 const SLAP_LINES = ['Hey! 😳', 'Oi! 😏', 'Cheeky! 🍑', 'Behave! 😂', 'Again? 😉', 'Excuse you! 😆'];
-let lockUntil = 0;          // no walking during a hug/kiss
+let lockUntil = 0;          // no walking during a hug/kiss/slap
 let leading = null;         // name of who's holding my hand while I lead
 let following = null;       // name of who I'm walking beside (they lead)
+let shot = null;            // close-up camera during an interaction
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 const otherOf = (name) => others.get(name);
+const findAvatar = (name) => (name === myName ? me : (others.get(name) || {}).av || null);
 /** The other player close enough to touch (within 1.8 m), or null. */
 function nearest(max = 1.8) {
   let best = null, bd = max;
   for (const [name, o] of others) { const d = o.av.root.position.distanceTo(me.root.position); if (d < bd) { bd = d; best = name; } }
   return best;
 }
-function faceToward(name) {
-  const o = otherOf(name); if (!o) return;
-  heading = Math.atan2(o.av.root.position.x - me.root.position.x, o.av.root.position.z - me.root.position.z);
+const angleTo = (from, to) => Math.atan2(to.x - from.x, to.z - from.z);
+/** Put me at a spot relative to someone (their facing), facing a given way. */
+function placeMe(x, z, h) { me.root.position.x = x; me.root.position.z = z; heading = h; me.root.rotation.y = h; }
+function startShot(kind, partner) {
+  const c = cinematic(kind);
+  if (c) shot = { ...c, partner, until: performance.now() + POSES[kind] * 1000 };
 }
-function doAct(a, fromRemote) {
-  void fromRemote;
+function doAct(a) {
   if (a === 'wave') { pose(me, 'wave'); send({ t: 'gact', a: 'wave' }); return; }
   const to = a === 'hands' && (leading || following) ? (leading || following) : nearest();
   if (!to) { if (a !== 'hands') me.say('Get closer 😉'); return; }
   const o = otherOf(to);
+  const P = o.av.root.position, ph = o.rot;
+  const line = a === 'slap' ? pick(SLAP_LINES) : undefined;
   if (a === 'hug' || a === 'kiss') {
-    faceToward(to);
-    lockUntil = performance.now() + (a === 'hug' ? 3600 : 2600);
-    stopHands(false);
-    pose(me, a); pose(o.av, a);
-    sound(a === 'kiss' ? 'kiss' : 'chime');
-    me.heart(a === 'kiss' ? '💋' : '🤗');
+    // Face them; they step into place in front of me (on their screen).
+    heading = angleTo(me.root.position, P);
+    me.root.rotation.y = heading;
+    lockUntil = performance.now() + POSES[a] * 1000;
+    stopHands(false); dancing = false;
+    pose(me, a, { partner: to }); pose(o.av, a, { partner: myName });
+    // She steps into place in front of me on her screen; show her there right away on mine.
+    const d = a === 'hug' ? HUG_GAP : KISS_GAP;
+    o.target.set(me.root.position.x + Math.sin(heading) * d, o.target.y, me.root.position.z + Math.cos(heading) * d);
+    o.av.root.position.copy(o.target); o.rot = heading + Math.PI; o.av.root.rotation.y = o.rot;
+    o.pinUntil = performance.now() + POSES[a] * 1000; // ignore older position updates meanwhile
+    setTimeout(() => sound(a === 'kiss' ? 'kiss' : 'chime'), a === 'kiss' ? 900 : 300);
+    setTimeout(() => me.heart(a === 'kiss' ? '💋' : '🤗'), 1000);
+    startShot(a, to);
   } else if (a === 'slap') {
-    pose(me, 'slap');
-    setTimeout(() => { pose(o.av, 'jump', { side: 1 }); o.av.say(pick(SLAP_LINES)); sound('slap'); }, 230);
+    // Step to her right side, just behind, turned toward her, then the swing.
+    const fx = Math.sin(ph), fz = Math.cos(ph), rx = -Math.cos(ph), rz = Math.sin(ph);
+    placeMe(P.x + rx * 0.5 - fx * 0.2, P.z + rz * 0.5 - fz * 0.2, ph + 0.5);
+    lockUntil = performance.now() + POSES.slap * 1000;
+    dancing = false;
+    pose(me, 'slap', { partner: to });
+    pose(o.av, 'slapped', { side: -1 });
+    setTimeout(() => { sound('slap'); }, 450);
+    setTimeout(() => o.av.say(line), 520);
+    startShot('slap', to);
   } else if (a === 'hands') {
     if (leading || following) { stopHands(true); return; }
     leading = to;
-    pose(me, 'hands', { side: 1 }); pose(o.av, 'hands', { side: -1 });
+    pose(me, 'hands', { partner: to, side: 1 }); pose(o.av, 'hands', { partner: myName, side: -1 });
     sound('chime');
-    me.say('🤝');
   }
-  send({ t: 'gact', a, to, line: a === 'slap' ? pick(SLAP_LINES) : undefined });
+  send({ t: 'gact', a, to, line, p: [me.root.position.x, me.root.position.y, me.root.position.z], r: heading });
   updateActs();
 }
 function stopHands(tell) {
@@ -610,38 +635,40 @@ function stopHands(tell) {
 function onAct(m) {
   const o = otherOf(m.from); if (!o) return;
   const forMe = m.to === myName;
+  // Their exact spot for this moment (so poses line up on both screens).
+  if (Array.isArray(m.p)) { o.target.set(...m.p); o.av.root.position.set(...m.p); }
+  if (Number.isFinite(m.r)) { o.rot = m.r; o.av.root.rotation.y = m.r; }
   if (m.a === 'wave') { pose(o.av, 'wave'); return; }
   if (m.a === 'hug' || m.a === 'kiss') {
-    pose(o.av, m.a);
+    pose(o.av, m.a, { partner: m.to });
     if (forMe) {
-      // Step into their arms: in front of them, facing them.
-      const h = o.rot, d = m.a === 'hug' ? 0.55 : 0.5;
-      me.root.position.set(o.av.root.position.x + Math.sin(h) * d, me.root.position.y, o.av.root.position.z + Math.cos(h) * d);
-      heading = h + Math.PI;
-      lockUntil = performance.now() + (m.a === 'hug' ? 3600 : 2600);
+      // Step into place in front of them, facing them.
+      const h = o.rot, d = m.a === 'hug' ? HUG_GAP : KISS_GAP;
+      placeMe(o.av.root.position.x + Math.sin(h) * d, o.av.root.position.z + Math.cos(h) * d, h + Math.PI);
+      lockUntil = performance.now() + POSES[m.a] * 1000;
       dancing = false;
       stopHands(false);
-      pose(me, m.a);
-      sound(m.a === 'kiss' ? 'kiss' : 'chime');
+      pose(me, m.a, { partner: m.from });
+      setTimeout(() => sound(m.a === 'kiss' ? 'kiss' : 'chime'), m.a === 'kiss' ? 900 : 300);
       if (navigator.vibrate) { try { navigator.vibrate(40); } catch { /* not allowed */ } }
+      startShot(m.a, m.from);
     }
-    o.av.heart(m.a === 'kiss' ? '💋' : '🤗');
+    setTimeout(() => o.av.heart(m.a === 'kiss' ? '💋' : '🤗'), 1000);
   } else if (m.a === 'slap') {
-    pose(o.av, 'slap');
+    pose(o.av, 'slap', { partner: m.to });
+    const target = forMe ? me : (otherOf(m.to) || {}).av;
+    if (target) pose(target, 'slapped', { side: -1 });
+    if (forMe) { lockUntil = performance.now() + POSES.slapped * 1000; dancing = false; startShot('slap', m.from); }
     setTimeout(() => {
-      const target = forMe ? me : (otherOf(m.to) || {}).av;
-      if (!target) return;
-      pose(target, 'jump', { side: -1 });
-      target.say(m.line || pick(SLAP_LINES));
       sound('slap');
       if (forMe && navigator.vibrate) { try { navigator.vibrate([30, 30, 60]); } catch { /* not allowed */ } }
-    }, 230);
+    }, 450);
+    setTimeout(() => { if (target) target.say(m.line || pick(SLAP_LINES)); }, 520);
   } else if (m.a === 'hands' && forMe) {
     if (m.off) { stopHands(false); return; }
     following = m.from; leading = null;
-    pose(o.av, 'hands', { side: 1 }); pose(me, 'hands', { side: -1 });
+    pose(o.av, 'hands', { partner: myName, side: 1 }); pose(me, 'hands', { partner: m.from, side: -1 });
     sound('chime');
-    me.say('🥰');
   }
   updateActs();
 }
@@ -708,7 +735,8 @@ function connect() {
     if (m.t === 'gpos' && m.from !== myName) {
       let o = others.get(m.from);
       if (!o) { o = { av: new Avatar(m.m === 'her' ? 'her' : 'him', m.from), target: new THREE.Vector3(...m.p), rot: m.r }; o.av.root.position.set(...m.p); others.set(m.from, o); }
-      o.target.set(...m.p); o.rot = m.r; o.av.play(m.a); o.seen = performance.now();
+      if (!(o.pinUntil > performance.now())) { o.target.set(...m.p); o.rot = m.r; }
+      o.av.play(m.a); o.seen = performance.now();
       updatePartner();
     } else if (m.t === 'gemote' && others.has(m.from)) others.get(m.from).av.heart(m.e === 'kiss' ? '💋' : '💖');
     else if (m.t === 'gact' && m.from !== myName) onAct(m);
@@ -727,7 +755,7 @@ connect();
 
 // ---- Game loop ------------------------------------------------------------------------------------
 const clock = new THREE.Clock();
-let sendT = 0, lastSent = '', lastSentAt = 0, fpsT = 0, frames = 0, actsT = 0;
+let sendT = 0, lastSent = '', lastSentAt = 0, fpsT = 0, frames = 0, actsT = 0, shotMix = 0, lastShot = null;
 const camTarget = new THREE.Vector3();
 function collide(p) {
   for (const [x0, z0, x1, z1] of colliders) {
@@ -790,7 +818,7 @@ function tick() {
   me.root.rotation.y = heading;
   me.play(anim);
   me.mixer.update(dt);
-  applyPoses(me);
+  applyPoses(me, findAvatar);
   if (window.__poseHook) window.__poseHook(me);
   // The other player: glide to where they are
   for (const o of others.values()) {
@@ -798,16 +826,31 @@ function tick() {
     let diff = o.rot - o.av.root.rotation.y; diff = Math.atan2(Math.sin(diff), Math.cos(diff));
     o.av.root.rotation.y += diff * Math.min(1, dt * 8);
     o.av.mixer.update(dt);
-    applyPoses(o.av);
+    applyPoses(o.av, findAvatar);
   }
   actsT += dt;
   if (actsT > 0.25) { actsT = 0; updateActs(); }
-  // Camera follows behind
-  camTarget.lerp(new THREE.Vector3(me.root.position.x, me.root.position.y + 1.5, me.root.position.z), Math.min(1, dt * 10));
+  // Camera follows behind; during a hug/kiss/slap it swings round to a close side view of you both.
+  let yaw = camYaw, pitch = camPitch, dist = camDist;
+  const focus = new THREE.Vector3(me.root.position.x, me.root.position.y + 1.5, me.root.position.z);
+  if (shot && performance.now() > shot.until) shot = null;
+  const partnerAv = shot && findAvatar(shot.partner);
+  shotMix = clamp(shotMix + (shot && partnerAv ? dt * 2.5 : -dt * 2), 0, 1);
+  if (shotMix > 0 && (partnerAv || lastShot)) {
+    if (shot && partnerAv) lastShot = { ...shot, mid: me.root.position.clone().add(partnerAv.root.position).multiplyScalar(0.5), across: angleTo(me.root.position, partnerAv.root.position) };
+    const s = lastShot, k = smooth(0, 1, shotMix);
+    const pav = findAvatar(s.partner);
+    const sideYaw = s.behind !== undefined && pav ? pav.root.rotation.y + Math.PI + s.behind   // behind them
+      : s.across + (Math.PI / 2) * (s.side || 1);            // looking across the line between you
+    let dy = sideYaw - camYaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+    yaw = camYaw + dy * k; pitch = lerp(camPitch, s.pitch, k); dist = lerp(camDist, s.dist, k);
+    focus.lerp(new THREE.Vector3(s.mid.x, s.mid.y + s.height, s.mid.z), k);
+  }
+  camTarget.lerp(focus, Math.min(1, dt * 10));
   const cp = new THREE.Vector3(
-    camTarget.x + Math.sin(camYaw) * Math.cos(camPitch) * camDist,
-    camTarget.y + Math.sin(camPitch) * camDist,
-    camTarget.z + Math.cos(camYaw) * Math.cos(camPitch) * camDist);
+    camTarget.x + Math.sin(yaw) * Math.cos(pitch) * dist,
+    camTarget.y + Math.sin(pitch) * dist,
+    camTarget.z + Math.cos(yaw) * Math.cos(pitch) * dist);
   cp.y = Math.max(cp.y, heightAt(cp.x, cp.z) + 0.6);
   camera.position.copy(cp);
   camera.lookAt(camTarget);
@@ -836,4 +879,4 @@ updateEnv(true);
 setupEffects();
 $('loading').classList.add('hidden');
 renderer.setAnimationLoop(tick);
-window.__game = { CLIPS, BASE, SKEL, soldier, michelle, SkeletonUtils, setHeading: (h) => { heading = h; }, me, others, scene, camera, renderer, labels, tick, setCam: (yaw, pitch, dist) => { camYaw = yaw; camPitch = pitch; camDist = dist; camTarget.copy(me.root.position).y += 1.5; }, setTime: (t) => { dayT = t; updateEnv(true); }, step: (n = 1) => { for (let i = 0; i < n; i++) tick(); } };
+window.__game = { doAct, CLIPS, BASE, SKEL, soldier, michelle, SkeletonUtils, shotOff: () => { shot = null; shotMix = 0; }, forceShot: () => { shotMix = 1; }, setHeading: (h) => { heading = h; }, me, others, scene, camera, renderer, labels, tick, setCam: (yaw, pitch, dist) => { camYaw = yaw; camPitch = pitch; camDist = dist; camTarget.copy(me.root.position).y += 1.5; }, setTime: (t) => { dayT = t; updateEnv(true); }, step: (n = 1) => { for (let i = 0; i < n; i++) tick(); } };

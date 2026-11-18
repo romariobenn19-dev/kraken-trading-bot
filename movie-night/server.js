@@ -582,6 +582,8 @@ function handle(ws, c, msg) {
         if (typeof msg.to === 'string') out.to = msg.to.slice(0, 30);
         if (msg.off) out.off = true;
         if (typeof msg.line === 'string') out.line = msg.line.slice(0, 40);
+        if (Array.isArray(msg.p) && msg.p.length === 3 && msg.p.every(Number.isFinite)) out.p = msg.p.map((v) => Math.round(v * 100) / 100);
+        if (Number.isFinite(msg.r)) out.r = msg.r;
       } else out.e = ['kiss', 'wave', 'heart'].includes(msg.e) ? msg.e : 'heart';
       const data = JSON.stringify(out);
       for (const [otherWs, o] of clients) if (o.game && otherWs !== ws && otherWs.readyState === otherWs.OPEN) otherWs.send(data);
