@@ -132,10 +132,14 @@ function mixamoDir() {
 }
 /** game-assets/Characters: your own character models (him.fbx / her.fbx, or .glb). */
 function charactersDir() {
-  try {
-    const d = fs.readdirSync(GAME_ASSETS_DIR, { withFileTypes: true }).find((e) => e.isDirectory() && e.name.toLowerCase() === 'characters');
-    return d ? path.join(GAME_ASSETS_DIR, d.name) : null;
-  } catch { return null; }
+  // game-assets\Characters, or game-assets\Mixamo\Characters
+  for (const base of [GAME_ASSETS_DIR, mixamoDir()].filter(Boolean)) {
+    try {
+      const d = fs.readdirSync(base, { withFileTypes: true }).find((e) => e.isDirectory() && e.name.toLowerCase() === 'characters');
+      if (d) return path.join(base, d.name);
+    } catch { /* not there */ }
+  }
+  return null;
 }
 function listCharacters() {
   const dir = charactersDir();
@@ -145,7 +149,10 @@ function listCharacters() {
   try { files = fs.readdirSync(dir); } catch { return out; }
   for (const who of ['him', 'her']) {
     const f = files.find((x) => new RegExp(`^${who}\\.(fbx|glb)$`, 'i').test(x));
-    if (f) out[who] = `/game-assets/characters/${encodeURIComponent(f)}`;
+    if (f) {
+      let v = 0; try { v = Math.round(fs.statSync(path.join(dir, f)).mtimeMs); } catch { /* ignore */ }
+      out[who] = `/game-assets/characters/${encodeURIComponent(f)}?v=${v}`;
+    }
   }
   return out;
 }
@@ -365,7 +372,7 @@ const server = http.createServer((req, res) => {
     const rel = decodeURIComponent(pathname.slice('/game-assets/characters/'.length));
     const file = dir && /\.(fbx|glb|gltf|bin|png|jpe?g|tga|webp)$/i.test(rel) ? within(dir, rel) : null;
     if (!file) { res.writeHead(404); res.end(); return; }
-    sendFile(req, res, file, 'no-cache');
+    sendFile(req, res, file, 'private, max-age=31536000, immutable'); // the link changes when the file does
     return;
   }
   if (pathname === '/api/game/anims') {

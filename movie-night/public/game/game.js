@@ -372,7 +372,7 @@ try {
   for (const who of ['him', 'her']) {
     if (!list[who]) continue;
     try {
-      const loaded = /\.glb$/i.test(list[who]) ? (await gltf.loadAsync(list[who])).scene : await new FBXLoader(manager).loadAsync(list[who]);
+      const loaded = /\.glb$/i.test(list[who].split('?')[0]) ? (await gltf.loadAsync(list[who])).scene : await new FBXLoader(manager).loadAsync(list[who]);
       let ok = false; loaded.traverse((o) => { if (o.isSkinnedMesh) ok = true; });
       if (ok && loaded.getObjectByName('mixamorigHips')) CUSTOM[who] = loaded;
       else console.warn(`${who}: not a Mixamo-rigged character (needs the Mixamo skeleton), using the default`);
