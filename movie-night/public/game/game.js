@@ -249,6 +249,13 @@ function box(w, h, d, mat, x, y, z, { collide = false, shadow = true, repeat } =
   return m;
 }
 const W = 11, D = 8.5, H = 3.1, T = 0.28;
+/** Where your feet go: the ground, or the house's step / floor (you used to sink through it). */
+function groundAt(x, z) {
+  const dx = Math.abs(x - HX), dz = Math.abs(z - HZ);
+  if (dx <= W / 2 - 0.1 && dz <= D / 2 - 0.1) return HY + 0.4;   // floorboards
+  if (dx <= W / 2 + 0.3 && dz <= D / 2 + 0.3) return HY + 0.35;  // the stone step round the house
+  return heightAt(x, z);
+}
 box(W + 0.6, 0.35, D + 0.6, trimMat, 0, 0.17, 0, { shadow: false });                              // foundation
 box(W - 0.2, 0.06, D - 0.2, wood, 0, 0.37, 0, { shadow: false, repeat: [3, 3] });                    // floor
 box(W, H, T, brick, 0, H / 2 + 0.35, -D / 2, { collide: true, repeat: [3, 1] });                     // back wall
@@ -383,6 +390,23 @@ try {
     try {
       const loaded = /\.glb$/i.test(list[who].split('?')[0]) ? (await gltf.loadAsync(list[who])).scene : await new FBXLoader(manager).loadAsync(list[who]);
       normalizeRig(loaded);
+      // FBX characters come with "Phong" materials, which ignore the sky's soft light: out of
+      // the sun they went almost black. Use the same physically-based material as the world.
+      loaded.traverse((o) => {
+        if (!o.isMesh) return;
+        const conv = (m) => {
+          if (!m || m.isMeshStandardMaterial) return m;
+          if (m.map) m.map.colorSpace = THREE.SRGBColorSpace;
+          const n = new THREE.MeshStandardMaterial({
+            name: m.name, map: m.map || null, normalMap: m.normalMap || null, alphaMap: m.alphaMap || null,
+            color: m.map ? 0xffffff : (m.color || new THREE.Color(0xcccccc)), roughness: 0.75, metalness: 0,
+            transparent: !!m.transparent, opacity: m.opacity ?? 1, alphaTest: m.alphaTest || (m.transparent ? 0.3 : 0), side: m.side,
+          });
+          if (m.emissiveMap) { n.emissiveMap = m.emissiveMap; n.emissive = new THREE.Color(0xffffff); }
+          return n;
+        };
+        o.material = Array.isArray(o.material) ? o.material.map(conv) : conv(o.material);
+      });
       let ok = false; loaded.traverse((o) => { if (o.isSkinnedMesh) ok = true; });
       if (ok && loaded.getObjectByName('mixamorigHips')) { CUSTOM[who] = loaded; CHAR_NOTES.push(`✅ ${who}.fbx loaded`); }
       else CHAR_NOTES.push(`⚠️ ${who}: not a Mixamo character (no Mixamo skeleton), using the default`);
@@ -633,7 +657,7 @@ class Avatar {
 
 const me = new Avatar(myKind, myName);
 me.root.position.set(HX + (myKind === 'him' ? -1 : 1), 0, HZ + D / 2 + 3);
-me.root.position.y = heightAt(me.root.position.x, me.root.position.z);
+me.root.position.y = groundAt(me.root.position.x, me.root.position.z);
 let heading = Math.PI; // facing away from the house, toward the path
 const others = new Map();
 
@@ -966,7 +990,10 @@ function tick() {
     heading += diff * Math.min(1, dt * 10);
     anim = running ? 'run' : 'walk';
   }
-  me.root.position.y = heightAt(me.root.position.x, me.root.position.z);
+  { // step up/down smoothly (onto the step and the floor)
+    const gy = groundAt(me.root.position.x, me.root.position.z);
+    me.root.position.y = Math.abs(gy - me.root.position.y) > 0.6 ? gy : lerp(me.root.position.y, gy, Math.min(1, dt * 14));
+  }
   me.root.rotation.y = heading;
   me.play(anim);
   me.mixer.update(dt);
