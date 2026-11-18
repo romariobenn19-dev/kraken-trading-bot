@@ -7,6 +7,14 @@ import { Sky } from 'three/addons/objects/Sky.js';
 import { Water } from 'three/addons/objects/Water.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { plantTrees } from './trees.js';
+import { pose, stopPose, applyPoses, sound } from './actions.js';
 
 const $ = (id) => document.getElementById(id);
 const store = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private */ } } };
@@ -33,9 +41,10 @@ const isTouch = matchMedia('(pointer: coarse)').matches;
 document.body.classList.toggle('is-touch', isTouch);
 $('touch').classList.toggle('hidden', !isTouch);
 const QUALITY = {
-  high: { pr: Math.min(devicePixelRatio, 1.5), shadows: true, shadowSize: 2048, water: true, trees: 220, grass: 26000, segs: 220, env: true, aa: true, far: 700 },
-  medium: { pr: Math.min(devicePixelRatio, 1), shadows: true, shadowSize: 1024, water: true, trees: 140, grass: 0, segs: 150, env: true, aa: true, far: 500 },
-  low: { pr: Math.min(devicePixelRatio, 0.85), shadows: false, shadowSize: 512, water: false, trees: 80, grass: 0, segs: 90, env: false, aa: false, far: 320 },
+  // post: ambient occlusion (soft contact shadows) + light glow + smooth edges
+  high: { pr: Math.min(devicePixelRatio, 1.5), shadows: true, shadowSize: 2048, water: true, trees: 260, grass: 26000, segs: 220, env: true, aa: false, far: 700, ao: true, bloom: true, smaa: true, clouds: true },
+  medium: { pr: Math.min(devicePixelRatio, 1), shadows: true, shadowSize: 1024, water: true, trees: 160, grass: 8000, segs: 150, env: true, aa: true, far: 500, ao: false, bloom: true, smaa: false, clouds: true },
+  low: { pr: Math.min(devicePixelRatio, 0.85), shadows: false, shadowSize: 512, water: false, trees: 90, grass: 0, segs: 90, env: false, aa: false, far: 320, ao: false, bloom: false, smaa: false, clouds: true },
 };
 const qName = store.get('mn_gq') || (isTouch || (navigator.hardwareConcurrency || 8) <= 4 ? 'low' : 'high');
 const Q = QUALITY[qName] || QUALITY.medium;
@@ -51,6 +60,7 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 0.55;
 renderer.shadowMap.enabled = Q.shadows;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+let composer = null; // effects on High/Medium (set up once the scene and camera exist)
 const labels = new CSS2DRenderer({ element: $('labels') });
 labels.setSize(innerWidth, innerHeight);
 
@@ -60,7 +70,22 @@ const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 30
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight); labels.setSize(innerWidth, innerHeight);
+  if (composer) composer.setSize(innerWidth, innerHeight);
 });
+function setupEffects() {
+  if (!Q.ao && !Q.bloom && !Q.smaa) return;
+  composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+  if (Q.ao) {
+    const ao = new GTAOPass(scene, camera, innerWidth, innerHeight);
+    ao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.4, thickness: 1.2, scale: 1.1, samples: 12 });
+    ao.blendIntensity = 0.85;
+    composer.addPass(ao);
+  }
+  if (Q.bloom) composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.22, 0.5, 0.92));
+  composer.addPass(new OutputPass());
+  if (Q.smaa) composer.addPass(new SMAAPass(innerWidth * renderer.getPixelRatio(), innerHeight * renderer.getPixelRatio()));
+}
 
 // ---- Loading ------------------------------------------------------------------------------------
 const manager = new THREE.LoadingManager();
@@ -165,6 +190,34 @@ const stars = (() => {
   return new THREE.Points(g, m);
 })();
 scene.add(stars);
+// Clouds: a soft layer drifting overhead.
+let clouds = null;
+if (Q.clouds) {
+  const cc = document.createElement('canvas'); cc.width = cc.height = 512;
+  const g = cc.getContext('2d');
+  const img = g.createImageData(512, 512);
+  for (let y = 0; y < 512; y++) for (let x = 0; x < 512; x++) {
+    // tileable noise: sample on a torus
+    const a = (x / 512) * Math.PI * 2, b = (y / 512) * Math.PI * 2;
+    const n = fbm(Math.cos(a) * 3 + 10, Math.sin(a) * 3 + Math.cos(b) * 3 + Math.sin(b) * 2.3);
+    const v = clamp((n - 0.5) * 3.2, 0, 1);
+    const i = (y * 512 + x) * 4;
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = 255; img.data[i + 3] = Math.round(v * 235);
+  }
+  g.putImageData(img, 0, 0);
+  const ct = new THREE.CanvasTexture(cc); ct.wrapS = ct.wrapT = THREE.RepeatWrapping;
+  // Fades out toward the horizon so the layer has no visible edge.
+  clouds = new THREE.Mesh(new THREE.PlaneGeometry(2400, 2400), new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false,
+    uniforms: { map: { value: ct }, offset: { value: new THREE.Vector2() }, tint: { value: new THREE.Color(1, 1, 1) }, opacity: { value: 1 } },
+    vertexShader: 'varying vec2 vUv; varying float vD; void main() { vUv = uv; vD = length(position.xy); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: 'uniform sampler2D map; uniform vec2 offset; uniform vec3 tint; uniform float opacity; varying vec2 vUv; varying float vD;'
+      + ' void main() { float a = texture2D(map, vUv * 3.0 + offset).a * opacity * (1.0 - smoothstep(450.0, 1100.0, vD)); gl_FragColor = vec4(tint, a); }',
+  }));
+  clouds.rotation.x = Math.PI / 2;
+  clouds.position.y = 260;
+  scene.add(clouds);
+}
 const pmrem = new THREE.PMREMGenerator(renderer);
 const envScene = new THREE.Scene();
 const envSky = new Sky();
@@ -272,21 +325,10 @@ scene.add(path);
     if (heightAt(x, z) > 20) continue;
     spots.push([x, z, 0.75 + rnd() * 0.7]);
   }
-  const trunkGeo = new THREE.CylinderGeometry(0.18, 0.32, 3.2, 7); trunkGeo.translate(0, 1.6, 0);
-  const crownGeo = new THREE.IcosahedronGeometry(1.9, 3);
-  { const p = crownGeo.attributes.position; for (let i = 0; i < p.count; i++) { const v = new THREE.Vector3().fromBufferAttribute(p, i); v.multiplyScalar(1 + (noise(v.x * 1.3 + 5, v.z * 1.3 + v.y) - 0.5) * 0.45); v.y *= 1.15; p.setXYZ(i, v.x, v.y, v.z); } crownGeo.computeVertexNormals(); crownGeo.translate(0, 4.4, 0); }
-  const trunks = new THREE.InstancedMesh(trunkGeo, new THREE.MeshStandardMaterial({ color: 0x5b4330, roughness: 1, map: tex('disturb.jpg', 1) }), spots.length);
-  const crowns = new THREE.InstancedMesh(crownGeo, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 }), spots.length);
+  // Real branches and leaves (see trees.js); higher up the hills it's mostly pines.
+  plantTrees(scene, spots.map(([x, z, sc], i) => [x, heightAt(x, z) - 0.15, z, sc, (heightAt(x, z) > 6 || i % 3 === 0) ? 2 + (i % 2) : i % 2]), qName);
+  for (const [x, z, sc] of spots) circles.push([x, z, 0.4 * sc]);
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), c = new THREE.Color();
-  spots.forEach(([x, z, s], i) => {
-    q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * Math.PI * 2);
-    sc.set(s, s * (0.9 + rnd() * 0.3), s);
-    m.compose(new THREE.Vector3(x, heightAt(x, z) - 0.1, z), q, sc);
-    trunks.setMatrixAt(i, m); crowns.setMatrixAt(i, m);
-    crowns.setColorAt(i, c.setHSL(0.27 + rnd() * 0.06, 0.55 + rnd() * 0.2, 0.05 + rnd() * 0.05));
-    circles.push([x, z, 0.45 * s]);
-  });
-  for (const im of [trunks, crowns]) { im.castShadow = true; im.receiveShadow = true; scene.add(im); }
   // Rocks
   const rockGeo = new THREE.DodecahedronGeometry(1, 1);
   { const p = rockGeo.attributes.position; for (let i = 0; i < p.count; i++) { const v = new THREE.Vector3().fromBufferAttribute(p, i); v.multiplyScalar(1 + (noise(v.x * 2 + 9, v.z * 2 + v.y) - 0.5) * 0.5); p.setXYZ(i, v.x, v.y * 0.6, v.z); } rockGeo.computeVertexNormals(); }
@@ -323,12 +365,82 @@ scene.add(path);
 const gltf = new GLTFLoader(manager);
 const [soldier, michelle] = await Promise.all([gltf.loadAsync('/game-assets/Soldier.glb'), gltf.loadAsync('/game-assets/Michelle.glb')]);
 const clip = (g, name) => g.animations.find((a) => a.name === name);
-// The walk/run/idle come from the Soldier; Michelle borrows them (same skeleton), and both of us
-// can do Michelle's samba. Position tracks are dropped when borrowing (different body sizes).
-const borrow = (c) => { const cl = c.clone(); cl.tracks = cl.tracks.filter((t) => !t.name.endsWith('.position')); return cl; };
+// The walk/run/idle come from the Soldier; Michelle borrows them, and both of us can do
+// Michelle's samba. The two skeletons have the same joints but different resting poses, so a
+// borrowed animation is converted: each joint keeps its movement *relative to its rest pose*
+// (copying the raw rotations turned her upside down). Position/scale tracks are dropped.
+function bonesOf(root) { const b = {}; root.traverse((o) => { if (o.isBone) b[o.name] = o; }); return b; }
+const SKEL = { soldier: soldier.scene, michelle: michelle.scene };
+// Both files come with a T-pose (arms straight out): put both skeletons in it, so "the same
+// pose" means the same thing for each before comparing movements.
+for (const [g, root] of [[soldier, soldier.scene], [michelle, michelle.scene]]) {
+  const tp = g.animations.find((a) => a.name === 'TPose');
+  const B = bonesOf(root);
+  if (tp) for (const t of tp.tracks) if (t.name.endsWith('.quaternion') && B[t.name.slice(0, -11)]) B[t.name.slice(0, -11)].quaternion.fromArray(t.values, 0);
+  root.updateMatrixWorld(true);
+}
+// Which way each model faces in its file (from the T-pose: right arm + up -> body frame).
+function bodyFrame(root) {
+  const B = bonesOf(root);
+  const p = (n) => B[n].getWorldPosition(new THREE.Vector3());
+  const right = p('mixamorigRightForeArm').sub(p('mixamorigRightArm')).normalize();
+  const up = p('mixamorigHead').sub(p('mixamorigHips')).normalize();
+  const fwd = new THREE.Vector3().crossVectors(right, up).normalize(); // a person's front = right x up
+  const upO = new THREE.Vector3().crossVectors(fwd, right).normalize();
+  return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(right, upO, fwd));
+}
+const FRAME = { soldier: bodyFrame(soldier.scene), michelle: bodyFrame(michelle.scene) };
+/** Turn needed so a model faces +Z (the way the game expects) at rotation 0. */
+const FACE = {};
+for (const [k, root] of [['him', soldier.scene], ['her', michelle.scene]]) {
+  const f = new THREE.Vector3(0, 0, 1).applyQuaternion(FRAME[k === 'him' ? 'soldier' : 'michelle']);
+  FACE[k] = Math.atan2(-f.x, f.z) || 0;
+  void root;
+}
+/**
+ * Full retarget, rotation only: for every keyframe, walk down the skeleton and give each
+ * target joint the same change in *body space* as the source joint (relative to each
+ * skeleton's own rest pose), then turn that back into the joint's local rotation.
+ */
+function borrow(c, from, to) {
+  const sRoot = SKEL[from], tRoot = SKEL[to];
+  sRoot.updateMatrixWorld(true); tRoot.updateMatrixWorld(true);
+  const S = bonesOf(sRoot), T = bonesOf(tRoot);
+  const order = []; tRoot.traverse((o) => { if (o.isBone && S[o.name]) order.push(o.name); });
+  const wq = (o) => o.getWorldQuaternion(new THREE.Quaternion());
+  const Ws = {}, Wt = {}, Wts = {};
+  for (const n of order) { Ws[n] = wq(S[n]); Wt[n] = wq(T[n]); Wts[n] = Ws[n].clone().invert(); }
+  const interp = {};
+  for (const t of c.tracks) if (t.name.endsWith('.quaternion')) interp[t.name.slice(0, -11)] = t.createInterpolant();
+  const times = (c.tracks.find((t) => t.name === 'mixamorigHips.quaternion') || c.tracks.find((t) => t.name.endsWith('.quaternion'))).times;
+  const out = Object.fromEntries(order.map((n) => [n, new Float32Array(times.length * 4)]));
+  const local = new THREE.Quaternion(), D = new THREE.Quaternion();
+  // The two models may face different ways: carry each movement over in the other's body frame.
+  const R = FRAME[to].clone().multiply(FRAME[from].clone().invert()), Rinv = R.clone().invert();
+  for (let i = 0; i < times.length; i++) {
+    const As = {}, At = {};
+    for (const n of order) {
+      const sb = S[n], tb = T[n];
+      if (interp[n]) local.fromArray(interp[n].evaluate(times[i])); else local.copy(sb.quaternion);
+      const ps = sb.parent && As[sb.parent.name] ? As[sb.parent.name] : wq(sb.parent);
+      As[n] = ps.clone().multiply(local);
+      D.copy(As[n]).multiply(Wts[n]);                 // change from rest, in body space
+      D.premultiply(R).multiply(Rinv);                // ...seen from the other model's front
+      At[n] = D.clone().multiply(Wt[n]);
+      const pt = tb.parent && At[tb.parent.name] ? At[tb.parent.name] : wq(tb.parent);
+      pt.clone().invert().multiply(At[n]).normalize().toArray(out[n], i * 4);
+    }
+  }
+  const cl = c.clone();
+  cl.tracks = order.map((n) => new THREE.QuaternionKeyframeTrack(`${n}.quaternion`, times, out[n]));
+  return cl;
+}
 const CLIPS = {
-  him: { idle: clip(soldier, 'Idle'), walk: clip(soldier, 'Walk'), run: clip(soldier, 'Run'), dance: borrow(clip(michelle, 'SambaDance')) },
-  her: { idle: borrow(clip(soldier, 'Idle')), walk: borrow(clip(soldier, 'Walk')), run: borrow(clip(soldier, 'Run')), dance: clip(michelle, 'SambaDance') },
+  him: { idle: clip(soldier, 'Idle'), walk: clip(soldier, 'Walk'), run: clip(soldier, 'Run'), dance: borrow(clip(michelle, 'SambaDance'), 'michelle', 'soldier') },
+  her: {
+    idle: borrow(clip(soldier, 'Idle'), 'soldier', 'michelle'), walk: borrow(clip(soldier, 'Walk'), 'soldier', 'michelle'),
+    run: borrow(clip(soldier, 'Run'), 'soldier', 'michelle'), dance: clip(michelle, 'SambaDance'),
+  },
 };
 const BASE = { him: soldier.scene, her: michelle.scene };
 const HEIGHT = { him: 1.8, her: 1.68 };
@@ -345,14 +457,14 @@ class Avatar {
     this.root = new THREE.Group();
     this.model = SkeletonUtils.clone(BASE[kind]);
     this.model.scale.setScalar(baseScale[kind]);
-    this.model.rotation.y = Math.PI; // the models face the other way
+    this.model.rotation.y = FACE[kind]; // face +Z like the game expects
     this.root.add(this.model);
     scene.add(this.root);
     this.mixer = new THREE.AnimationMixer(this.model);
     this.actions = Object.fromEntries(Object.entries(CLIPS[kind]).map(([k, c]) => [k, this.mixer.clipAction(c)]));
     this.current = 'idle';
     this.actions.idle.play();
-    const tag = document.createElement('div'); tag.className = 'nametag'; tag.textContent = petName(name);
+    const tag = document.createElement('div'); tag.innerHTML = '<div class="nametag"></div>'; tag.firstChild.textContent = petName(name);
     this.tag = new CSS2DObject(tag); this.tag.position.set(0, HEIGHT[kind] + 0.35, 0);
     this.root.add(this.tag);
   }
@@ -364,10 +476,18 @@ class Avatar {
     this.current = name;
   }
   heart(symbol = '💋') {
-    const el = document.createElement('div'); el.className = 'float-heart'; el.textContent = symbol;
+    // The outer element is placed over the head each frame; the inner one does the animation
+    // (an animation on the outer one would override the placement).
+    const el = document.createElement('div'); el.innerHTML = '<div class="float-heart"></div>'; el.firstChild.textContent = symbol;
     const o = new CSS2DObject(el); o.position.set(0, HEIGHT[this.kind] + 0.6, 0);
     this.root.add(o);
     setTimeout(() => { this.root.remove(o); el.remove(); }, 2400);
+  }
+  say(text) {
+    const el = document.createElement('div'); el.innerHTML = '<div class="bubble"></div>'; el.firstChild.textContent = text;
+    const o = new CSS2DObject(el); o.position.set(0, HEIGHT[this.kind] + 0.75, 0);
+    this.root.add(o);
+    setTimeout(() => { this.root.remove(o); el.remove(); }, 2200);
   }
   dispose() { scene.remove(this.root); this.tag.element.remove(); }
 }
@@ -385,7 +505,11 @@ const stick = { x: 0, y: 0, active: false };
 addEventListener('keydown', (e) => {
   keys.add(e.code);
   if (e.code === 'KeyG') toggleDance();
-  if (e.code === 'KeyK') blowKiss();
+  if (e.code === 'KeyQ') doAct('wave');
+  if (e.code === 'KeyK') { if (nearest()) doAct('kiss'); else blowKiss(); }
+  if (e.code === 'KeyH') doAct('hug');
+  if (e.code === 'KeyJ') doAct('slap');
+  if (e.code === 'KeyF') doAct('hands');
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
@@ -425,7 +549,112 @@ const toggleDance = () => { dancing = !dancing; $('tDance').classList.toggle('on
 function blowKiss() { me.heart('💋'); send({ t: 'gemote', e: 'kiss' }); }
 $('tRun').onclick = () => { runToggle = !runToggle; $('tRun').classList.toggle('on', runToggle); };
 $('tDance').onclick = toggleDance; $('dDance').onclick = toggleDance;
-$('tKiss').onclick = blowKiss; $('dKiss').onclick = blowKiss;
+$('tKiss').onclick = () => (nearest() ? doAct('kiss') : blowKiss());
+$('dKiss').onclick = () => (nearest() ? doAct('kiss') : blowKiss());
+$('tWave').onclick = () => doAct('wave'); $('dWave').onclick = () => doAct('wave');
+for (const b of document.querySelectorAll('#acts [data-act]')) b.onclick = () => doAct(b.dataset.act);
+
+// ---- Together: hug, kiss, a cheeky slap, holding hands, waving ----------------------------
+const SLAP_LINES = ['Hey! 😳', 'Oi! 😏', 'Cheeky! 🍑', 'Behave! 😂', 'Again? 😉', 'Excuse you! 😆'];
+let lockUntil = 0;          // no walking during a hug/kiss
+let leading = null;         // name of who's holding my hand while I lead
+let following = null;       // name of who I'm walking beside (they lead)
+const pick = (a) => a[Math.floor(Math.random() * a.length)];
+const otherOf = (name) => others.get(name);
+/** The other player close enough to touch (within 1.8 m), or null. */
+function nearest(max = 1.8) {
+  let best = null, bd = max;
+  for (const [name, o] of others) { const d = o.av.root.position.distanceTo(me.root.position); if (d < bd) { bd = d; best = name; } }
+  return best;
+}
+function faceToward(name) {
+  const o = otherOf(name); if (!o) return;
+  heading = Math.atan2(o.av.root.position.x - me.root.position.x, o.av.root.position.z - me.root.position.z);
+}
+function doAct(a, fromRemote) {
+  void fromRemote;
+  if (a === 'wave') { pose(me, 'wave'); send({ t: 'gact', a: 'wave' }); return; }
+  const to = a === 'hands' && (leading || following) ? (leading || following) : nearest();
+  if (!to) { if (a !== 'hands') me.say('Get closer 😉'); return; }
+  const o = otherOf(to);
+  if (a === 'hug' || a === 'kiss') {
+    faceToward(to);
+    lockUntil = performance.now() + (a === 'hug' ? 3600 : 2600);
+    stopHands(false);
+    pose(me, a); pose(o.av, a);
+    sound(a === 'kiss' ? 'kiss' : 'chime');
+    me.heart(a === 'kiss' ? '💋' : '🤗');
+  } else if (a === 'slap') {
+    pose(me, 'slap');
+    setTimeout(() => { pose(o.av, 'jump', { side: 1 }); o.av.say(pick(SLAP_LINES)); sound('slap'); }, 230);
+  } else if (a === 'hands') {
+    if (leading || following) { stopHands(true); return; }
+    leading = to;
+    pose(me, 'hands', { side: 1 }); pose(o.av, 'hands', { side: -1 });
+    sound('chime');
+    me.say('🤝');
+  }
+  send({ t: 'gact', a, to, line: a === 'slap' ? pick(SLAP_LINES) : undefined });
+  updateActs();
+}
+function stopHands(tell) {
+  const who = leading || following;
+  if (!who) return;
+  stopPose(me, 'hands');
+  const o = otherOf(who); if (o) stopPose(o.av, 'hands');
+  leading = following = null;
+  if (tell) send({ t: 'gact', a: 'hands', to: who, off: true });
+  updateActs();
+}
+/** Something the other player did (to me, or just near me). */
+function onAct(m) {
+  const o = otherOf(m.from); if (!o) return;
+  const forMe = m.to === myName;
+  if (m.a === 'wave') { pose(o.av, 'wave'); return; }
+  if (m.a === 'hug' || m.a === 'kiss') {
+    pose(o.av, m.a);
+    if (forMe) {
+      // Step into their arms: in front of them, facing them.
+      const h = o.rot, d = m.a === 'hug' ? 0.55 : 0.5;
+      me.root.position.set(o.av.root.position.x + Math.sin(h) * d, me.root.position.y, o.av.root.position.z + Math.cos(h) * d);
+      heading = h + Math.PI;
+      lockUntil = performance.now() + (m.a === 'hug' ? 3600 : 2600);
+      dancing = false;
+      stopHands(false);
+      pose(me, m.a);
+      sound(m.a === 'kiss' ? 'kiss' : 'chime');
+      if (navigator.vibrate) { try { navigator.vibrate(40); } catch { /* not allowed */ } }
+    }
+    o.av.heart(m.a === 'kiss' ? '💋' : '🤗');
+  } else if (m.a === 'slap') {
+    pose(o.av, 'slap');
+    setTimeout(() => {
+      const target = forMe ? me : (otherOf(m.to) || {}).av;
+      if (!target) return;
+      pose(target, 'jump', { side: -1 });
+      target.say(m.line || pick(SLAP_LINES));
+      sound('slap');
+      if (forMe && navigator.vibrate) { try { navigator.vibrate([30, 30, 60]); } catch { /* not allowed */ } }
+    }, 230);
+  } else if (m.a === 'hands' && forMe) {
+    if (m.off) { stopHands(false); return; }
+    following = m.from; leading = null;
+    pose(o.av, 'hands', { side: 1 }); pose(me, 'hands', { side: -1 });
+    sound('chime');
+    me.say('🥰');
+  }
+  updateActs();
+}
+function updateActs() {
+  const who = nearest() || leading || following;
+  $('acts').classList.toggle('hidden', !who);
+  $('help').classList.toggle('hidden', !!who);
+  if (!who) return;
+  $('actsWho').textContent = petName(who);
+  const handsBtn = document.querySelector('#acts [data-act="hands"]');
+  handsBtn.classList.toggle('on', !!(leading || following));
+  handsBtn.querySelector('span').textContent = leading || following ? 'Let go' : 'Hold hands';
+}
 
 // ---- Time of day -------------------------------------------------------------------------------
 const DAY_SECONDS = 8 * 60; // one day = 8 minutes in this test
@@ -443,10 +672,11 @@ function updateEnv(force) {
   sunLight.intensity = 3.2 * day;
   sunLight.color.setHSL(0.09, 0.5 + golden * 0.4, 0.9 - golden * 0.25);
   moonLight.intensity = 0.35 * (1 - day);
-  hemi.intensity = 0.26 + 0.42 * day;
+  hemi.intensity = (0.26 + 0.42 * day) * (Q.env ? 1 : 1.9); // no sky reflections on Low: more soft light instead
   hemi.color.setHSL(0.6, 0.5, 0.35 + 0.45 * day);
   renderer.toneMappingExposure = 0.42 + 0.18 * day;
   stars.material.opacity = 1 - smooth(-0.15, 0.08, elev);
+  if (clouds) { clouds.material.uniforms.tint.value.setHSL(0.07, 0.6 * golden * day, 0.12 + 0.85 * day); clouds.material.uniforms.opacity.value = 0.35 + 0.6 * day; }
   const night = 1 - day;
   windowMat.emissiveIntensity = night * 0.75;
   lampLight.intensity = night * 14;
@@ -481,7 +711,11 @@ function connect() {
       o.target.set(...m.p); o.rot = m.r; o.av.play(m.a); o.seen = performance.now();
       updatePartner();
     } else if (m.t === 'gemote' && others.has(m.from)) others.get(m.from).av.heart(m.e === 'kiss' ? '💋' : '💖');
-    else if (m.t === 'gleave' && others.has(m.from)) { others.get(m.from).av.dispose(); others.delete(m.from); updatePartner(); }
+    else if (m.t === 'gact' && m.from !== myName) onAct(m);
+    else if (m.t === 'gleave' && others.has(m.from)) {
+      if (leading === m.from || following === m.from) stopHands(false);
+      others.get(m.from).av.dispose(); others.delete(m.from); updatePartner(); updateActs();
+    }
   };
   ws.onclose = () => setTimeout(connect, 2000);
 }
@@ -493,7 +727,7 @@ connect();
 
 // ---- Game loop ------------------------------------------------------------------------------------
 const clock = new THREE.Clock();
-let sendT = 0, lastSent = '', fpsT = 0, frames = 0;
+let sendT = 0, lastSent = '', lastSentAt = 0, fpsT = 0, frames = 0, actsT = 0;
 const camTarget = new THREE.Vector3();
 function collide(p) {
   for (const [x0, z0, x1, z1] of colliders) {
@@ -519,9 +753,24 @@ function tick() {
   if (keys.has('KeyA') || keys.has('ArrowLeft')) ix -= 1;
   if (keys.has('KeyD') || keys.has('ArrowRight')) ix += 1;
   if (stick.active) { ix = stick.x; iy = stick.y; }
-  const mag = Math.min(1, Math.hypot(ix, iy));
+  if (performance.now() < lockUntil) { ix = 0; iy = 0; }
+  let mag = Math.min(1, Math.hypot(ix, iy));
+  // Walking hand in hand: they lead, I stay at their right side (moving myself lets go).
+  if (following) {
+    const o = otherOf(following);
+    if (!o || mag > 0.3) stopHands(true);
+    else {
+      const h = o.rot;
+      me.root.position.x = o.av.root.position.x - Math.cos(h) * 0.62;
+      me.root.position.z = o.av.root.position.z + Math.sin(h) * 0.62;
+      heading = h;
+      mag = 0;
+    }
+  }
   const running = keys.has('ShiftLeft') || keys.has('ShiftRight') || runToggle || (stick.active && mag > 0.92);
   let anim = dancing ? 'dance' : 'idle';
+  if (following && otherOf(following)) anim = otherOf(following).av.current === 'dance' ? 'idle' : otherOf(following).av.current;
+  if (leading && otherOf(leading) && otherOf(leading).av.root.position.distanceTo(me.root.position) > 4) stopHands(true);
   if (mag > 0.12) {
     dancing = false; $('tDance').classList.remove('on'); $('dDance').classList.remove('on');
     const fx = -Math.sin(camYaw), fz = -Math.cos(camYaw), rx = -fz, rz = fx;
@@ -541,13 +790,18 @@ function tick() {
   me.root.rotation.y = heading;
   me.play(anim);
   me.mixer.update(dt);
+  applyPoses(me);
+  if (window.__poseHook) window.__poseHook(me);
   // The other player: glide to where they are
   for (const o of others.values()) {
     o.av.root.position.lerp(o.target, Math.min(1, dt * 8));
     let diff = o.rot - o.av.root.rotation.y; diff = Math.atan2(Math.sin(diff), Math.cos(diff));
     o.av.root.rotation.y += diff * Math.min(1, dt * 8);
     o.av.mixer.update(dt);
+    applyPoses(o.av);
   }
+  actsT += dt;
+  if (actsT > 0.25) { actsT = 0; updateActs(); }
   // Camera follows behind
   camTarget.lerp(new THREE.Vector3(me.root.position.x, me.root.position.y + 1.5, me.root.position.z), Math.min(1, dt * 10));
   const cp = new THREE.Vector3(
@@ -563,6 +817,7 @@ function tick() {
   moonLight.target.position.copy(me.root.position);
   moonLight.position.copy(me.root.position).add(new THREE.Vector3(-60, 90, 40));
   if (water.material.uniforms) water.material.uniforms.time.value += dt * 0.6;
+  if (clouds) { clouds.material.uniforms.offset.value.x += dt * 0.0012; clouds.position.x = me.root.position.x; clouds.position.z = me.root.position.z; }
   // Tell the other player (10x a second, only when something changed)
   sendT += dt;
   if (sendT > 0.1) {
@@ -570,14 +825,15 @@ function tick() {
     const p = me.root.position;
     const msg = { t: 'gpos', p: [p.x, p.y, p.z], r: heading, a: anim, m: myKind };
     const key = `${p.x.toFixed(2)},${p.z.toFixed(2)},${heading.toFixed(2)},${anim}`;
-    if (key !== lastSent) { lastSent = key; send(msg); }
+    if (key !== lastSent || performance.now() - lastSentAt > 3000) { lastSent = key; lastSentAt = performance.now(); send(msg); }
   }
-  renderer.render(scene, camera);
+  if (composer) composer.render(dt); else renderer.render(scene, camera);
   labels.render(scene, camera);
   frames++; fpsT += dt;
   if (fpsT > 1) { $('fps').textContent = `${Math.round(frames / fpsT)} fps · ${qName}`; frames = 0; fpsT = 0; }
 }
 updateEnv(true);
+setupEffects();
 $('loading').classList.add('hidden');
 renderer.setAnimationLoop(tick);
-window.__game = { me, others, scene, camera, renderer, labels, tick, setCam: (yaw, pitch, dist) => { camYaw = yaw; camPitch = pitch; camDist = dist; camTarget.copy(me.root.position).y += 1.5; }, setTime: (t) => { dayT = t; updateEnv(true); }, step: (n = 1) => { for (let i = 0; i < n; i++) tick(); } };
+window.__game = { CLIPS, BASE, SKEL, soldier, michelle, SkeletonUtils, setHeading: (h) => { heading = h; }, me, others, scene, camera, renderer, labels, tick, setCam: (yaw, pitch, dist) => { camYaw = yaw; camPitch = pitch; camDist = dist; camTarget.copy(me.root.position).y += 1.5; }, setTime: (t) => { dayT = t; updateEnv(true); }, step: (n = 1) => { for (let i = 0; i < n; i++) tick(); } };

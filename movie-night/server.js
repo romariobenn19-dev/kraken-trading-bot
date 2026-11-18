@@ -565,7 +565,7 @@ function handle(ws, c, msg) {
     case 'intermissionEnd':
       if (room.intermission) endIntermission();
       break;
-    case 'gpos': case 'gemote': {
+    case 'gpos': case 'gemote': case 'gact': {
       // Our world: pass where you are / what you're doing to the other player(s).
       if (!c.game) return;
       const out = { t: msg.t, from: c.name };
@@ -576,6 +576,12 @@ function handle(ws, c, msg) {
         out.a = ['idle', 'walk', 'run', 'dance'].includes(msg.a) ? msg.a : 'idle';
         out.m = msg.m === 'her' ? 'her' : 'him';
         c.gstate = { p: out.p, r: out.r, a: out.a, m: out.m };
+      } else if (msg.t === 'gact') {
+        if (!['hug', 'kiss', 'slap', 'hands', 'wave'].includes(msg.a)) return;
+        out.a = msg.a;
+        if (typeof msg.to === 'string') out.to = msg.to.slice(0, 30);
+        if (msg.off) out.off = true;
+        if (typeof msg.line === 'string') out.line = msg.line.slice(0, 40);
       } else out.e = ['kiss', 'wave', 'heart'].includes(msg.e) ? msg.e : 'heart';
       const data = JSON.stringify(out);
       for (const [otherWs, o] of clients) if (o.game && otherWs !== ws && otherWs.readyState === otherWs.OPEN) otherWs.send(data);

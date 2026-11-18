@@ -45,3 +45,19 @@ body.is-touch .touch-btns.desk, body.is-touch .help { display: none; }
 .bar { height: 10px; border-radius: 999px; background: rgba(255,255,255,.15); overflow: hidden; margin: 14px 0; }
 .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #e9b4ab, #f3d27a); transition: width .3s; }
 .small { font-size: 13px; opacity: .7; }
+
+/* Together actions (shown when you're close) */
+.acts { position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%); display: flex; gap: 6px; align-items: center; z-index: 5;
+  background: rgba(10, 12, 20, .5); padding: 6px 8px; border-radius: 999px; justify-content: center; max-width: calc(100% - 24px); }
+.acts-who { font-weight: 700; padding: 0 6px; }
+.acts button { border: 0; border-radius: 999px; padding: 7px 12px; background: rgba(255, 250, 242, .94); color: #4a3326; font: 700 14px system-ui, sans-serif; cursor: pointer; white-space: nowrap; }
+@media (max-width: 700px) { .acts button span { display: none; } .acts button { font-size: 20px; padding: 8px 12px; } }
+.acts button.on { background: #e9b4ab; }
+.acts kbd { margin-left: 6px; font: 600 11px system-ui; color: #8f7663; border: 1px solid #d9c4a5; border-radius: 4px; padding: 0 4px; }
+body.is-touch .acts { bottom: auto; top: 64px; }
+body.is-touch .acts button { font-size: 22px; padding: 9px 13px; }
+body.is-touch .acts button span { display: none; }
+body.is-touch .acts kbd { display: none; }
+.bubble { padding: 6px 12px; border-radius: 14px; background: #fffaf2; color: #4a3326; font: 800 15px system-ui, sans-serif; box-shadow: 0 4px 14px rgba(0,0,0,.35);
+  animation: bubbleIn 2.2s ease-out forwards; transform-origin: bottom center; }
+@keyframes bubbleIn { 0% { transform: translateY(0) scale(.3); opacity: 0; } 12% { transform: translateY(-8px) scale(1.05); opacity: 1; } 80% { opacity: 1; } 100% { transform: translateY(-26px); opacity: 0; } }

@@ -1,6 +1,6 @@
 {
   "name": "movie-night",
-  "version": "2.12.0",
+  "version": "2.13.0",
   "private": true,
   "description": "Synced long-distance movie nights: the host laptop does the heavy lifting, the partner's tablet just plays.",
   "main": "server.js",
@@ -59,7 +59,9 @@
       "public/apple-touch-icon.png",
       "public/game/index.html",
       "public/game/game.js",
-      "public/game/game.css"
+      "public/game/game.css",
+      "public/game/trees.js",
+      "public/game/actions.js"
     ]
   }
 }
