@@ -92,6 +92,8 @@ The first step toward your own game: tap **🎮 Our world** at the top of Movie 
 - **Laptop:** WASD or the arrow keys to walk, Shift to run, drag to look around, scroll to zoom, **G** to dance, **K** to blow a kiss.
 - **Tablet:** the left thumb stick to walk (push it all the way to run), drag on the right to look around, buttons for 🏃 run, 💃 dance and 💋 kiss.
 - **Graphics** (top right): High, Medium or Low. The laptop starts on High, the tablet on Low; the fps number shows how smoothly it runs.
+- **Your own characters:** put Mixamo characters (downloaded "With Skin", "T-pose", FBX) in `game-assets\Characters` named `him.fbx` and `her.fbx` (or .glb). All the moves are fitted to them automatically.
+- **Real moves:** put your Mixamo animations and their `manifest.json` in `game-assets\Mixamo`.
 - The 3D models and textures (about 12 MB) are fetched by the laptop the first time and kept there; they aren't stored in GitHub. The characters come from the three.js examples (Mixamo models), for your own use.
 
 ## Install it as an app

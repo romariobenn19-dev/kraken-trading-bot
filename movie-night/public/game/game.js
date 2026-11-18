@@ -365,6 +365,20 @@ scene.add(path);
 // ---- The two of us ---------------------------------------------------------------------------
 const gltf = new GLTFLoader(manager);
 const [soldier, michelle] = await Promise.all([gltf.loadAsync('/game-assets/Soldier.glb'), gltf.loadAsync('/game-assets/Michelle.glb')]);
+// Your own characters, if you've put them in game-assets\\Characters (him.fbx / her.fbx or .glb).
+const CUSTOM = {};
+try {
+  const list = await (await fetch('/api/game/characters', { cache: 'no-store' })).json();
+  for (const who of ['him', 'her']) {
+    if (!list[who]) continue;
+    try {
+      const loaded = /\.glb$/i.test(list[who]) ? (await gltf.loadAsync(list[who])).scene : await new FBXLoader(manager).loadAsync(list[who]);
+      let ok = false; loaded.traverse((o) => { if (o.isSkinnedMesh) ok = true; });
+      if (ok && loaded.getObjectByName('mixamorigHips')) CUSTOM[who] = loaded;
+      else console.warn(`${who}: not a Mixamo-rigged character (needs the Mixamo skeleton), using the default`);
+    } catch (e) { console.warn(`Could not load your ${who} character:`, e.message); }
+  }
+} catch { /* none */ }
 const clip = (g, name) => g.animations.find((a) => a.name === name);
 // The walk/run/idle come from the Soldier; Michelle borrows them, and both of us can do
 // Michelle's samba. The two skeletons have the same joints but different resting poses, so a
@@ -380,6 +394,8 @@ function bonesOf(root) {
   return b;
 }
 const SKEL = { soldier: soldier.scene, michelle: michelle.scene };
+SKEL.him = CUSTOM.him || soldier.scene;   // who you are in the game
+SKEL.her = CUSTOM.her || michelle.scene;
 // Both files come with a T-pose (arms straight out): put both skeletons in it, so "the same
 // pose" means the same thing for each before comparing movements.
 for (const [g, root] of [[soldier, soldier.scene], [michelle, michelle.scene]]) {
@@ -402,12 +418,13 @@ function bodyFrame(root) {
   return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(left, upO, fwd));
 }
 const FRAME = { soldier: bodyFrame(soldier.scene), michelle: bodyFrame(michelle.scene) };
+FRAME.him = CUSTOM.him ? bodyFrame(CUSTOM.him) : FRAME.soldier;
+FRAME.her = CUSTOM.her ? bodyFrame(CUSTOM.her) : FRAME.michelle;
 /** Turn needed so a model faces +Z (the way the game expects) at rotation 0. */
 const FACE = {};
-for (const [k, root] of [['him', soldier.scene], ['her', michelle.scene]]) {
-  const f = new THREE.Vector3(0, 0, 1).applyQuaternion(FRAME[k === 'him' ? 'soldier' : 'michelle']);
+for (const k of ['him', 'her']) {
+  const f = new THREE.Vector3(0, 0, 1).applyQuaternion(FRAME[k]);
   FACE[k] = Math.atan2(-f.x, f.z) || 0;
-  void root;
 }
 /**
  * Full retarget, rotation only: for every keyframe, walk down the skeleton and give each
@@ -469,14 +486,12 @@ function borrow(c, from, to) {
   }
   return cl;
 }
-const CLIPS = {
-  him: { idle: clip(soldier, 'Idle'), walk: clip(soldier, 'Walk'), run: clip(soldier, 'Run'), dance: borrow(clip(michelle, 'SambaDance'), 'michelle', 'soldier') },
-  her: {
-    idle: borrow(clip(soldier, 'Idle'), 'soldier', 'michelle'), walk: borrow(clip(soldier, 'Walk'), 'soldier', 'michelle'),
-    run: borrow(clip(soldier, 'Run'), 'soldier', 'michelle'), dance: clip(michelle, 'SambaDance'),
-  },
-};
-const BASE = { him: soldier.scene, her: michelle.scene };
+const builtIn = (k) => ({
+  idle: borrow(clip(soldier, 'Idle'), 'soldier', k), walk: borrow(clip(soldier, 'Walk'), 'soldier', k),
+  run: borrow(clip(soldier, 'Run'), 'soldier', k), dance: borrow(clip(michelle, 'SambaDance'), 'michelle', k),
+});
+const CLIPS = { him: builtIn('him'), her: builtIn('her') };
+const BASE = { him: SKEL.him, her: SKEL.her };
 const MOCAP_LOADED = new Map(); // move -> Mixamo animation name
 const ONCE = new Set(['wave', 'hug', 'kiss', 'slap', 'flinch', 'cheer', 'blowkiss', 'laugh', 'clap']); // play once, not on a loop
 const HEIGHT = { him: 1.8, her: 1.68 };
@@ -1015,7 +1030,7 @@ async function loadMocap() {
         const anim = obj.animations && obj.animations[0];
         if (!anim) continue;
         obj.updateMatrixWorld(true);
-        const c = borrow(anim, { root: obj, frame: obj.__frame || (obj.__frame = bodyFrame(obj)) }, kind === 'him' ? 'soldier' : 'michelle');
+        const c = borrow(anim, { root: obj, frame: obj.__frame || (obj.__frame = bodyFrame(obj)) }, kind);
         c.name = `${move}:${pick.description || pick.name}`;
         CLIPS[kind][move] = c;
         for (const av of [me, ...[...others.values()].map((o) => o.av)]) {

@@ -62,3 +62,4 @@ body.is-touch .acts kbd { display: none; }
   animation: bubbleIn 2.2s ease-out forwards; transform-origin: bottom center; }
 @keyframes bubbleIn { 0% { transform: translateY(0) scale(.3); opacity: 0; } 12% { transform: translateY(-8px) scale(1.05); opacity: 1; } 80% { opacity: 1; } 100% { transform: translateY(-26px); opacity: 0; } }
 .game-toast { position: fixed; left: 50%; top: 118px; transform: translateX(-50%); z-index: 6; }
+.touch-btns { flex-wrap: wrap-reverse; max-height: calc(100vh - 150px); align-content: flex-end; }

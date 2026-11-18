@@ -130,6 +130,25 @@ function mixamoDir() {
     return d ? path.join(GAME_ASSETS_DIR, d.name) : null;
   } catch { return null; }
 }
+/** game-assets/Characters: your own character models (him.fbx / her.fbx, or .glb). */
+function charactersDir() {
+  try {
+    const d = fs.readdirSync(GAME_ASSETS_DIR, { withFileTypes: true }).find((e) => e.isDirectory() && e.name.toLowerCase() === 'characters');
+    return d ? path.join(GAME_ASSETS_DIR, d.name) : null;
+  } catch { return null; }
+}
+function listCharacters() {
+  const dir = charactersDir();
+  const out = {};
+  if (!dir) return out;
+  let files = [];
+  try { files = fs.readdirSync(dir); } catch { return out; }
+  for (const who of ['him', 'her']) {
+    const f = files.find((x) => new RegExp(`^${who}\\.(fbx|glb)$`, 'i').test(x));
+    if (f) out[who] = `/game-assets/characters/${encodeURIComponent(f)}`;
+  }
+  return out;
+}
 function listMixamo() {
   const dir = mixamoDir();
   if (!dir) return [];
@@ -334,6 +353,19 @@ const server = http.createServer((req, res) => {
     const file = /^(build|examples\/jsm)\//.test(rel) ? within(path.join(ROOT, 'node_modules', 'three'), rel) : null;
     if (!file) { res.writeHead(403); res.end(); return; }
     sendFile(req, res, file, 'private, max-age=86400');
+    return;
+  }
+  if (pathname === '/api/game/characters') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(listCharacters()));
+    return;
+  }
+  if (pathname.toLowerCase().startsWith('/game-assets/characters/')) {
+    const dir = charactersDir();
+    const rel = decodeURIComponent(pathname.slice('/game-assets/characters/'.length));
+    const file = dir && /\.(fbx|glb|gltf|bin|png|jpe?g|tga|webp)$/i.test(rel) ? within(dir, rel) : null;
+    if (!file) { res.writeHead(404); res.end(); return; }
+    sendFile(req, res, file, 'no-cache');
     return;
   }
   if (pathname === '/api/game/anims') {
