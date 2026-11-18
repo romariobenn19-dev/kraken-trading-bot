@@ -113,6 +113,7 @@ const THREE_EXAMPLES = 'https://raw.githubusercontent.com/mrdoob/three.js/r170/e
 const GAME_ASSETS = {
   'Soldier.glb': `${THREE_EXAMPLES}/models/gltf/Soldier.glb`,
   'Michelle.glb': `${THREE_EXAMPLES}/models/gltf/Michelle.glb`,
+  'Xbot.glb': `${THREE_EXAMPLES}/models/gltf/Xbot.glb`, // Mixamo's X Bot: the rest pose your downloads were made on
   'grass.jpg': `${THREE_EXAMPLES}/textures/terrain/grasslight-big.jpg`,
   'brick_diffuse.jpg': `${THREE_EXAMPLES}/textures/brick_diffuse.jpg`,
   'brick_bump.jpg': `${THREE_EXAMPLES}/textures/brick_bump.jpg`,

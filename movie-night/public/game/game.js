@@ -364,19 +364,29 @@ scene.add(path);
 
 // ---- The two of us ---------------------------------------------------------------------------
 const gltf = new GLTFLoader(manager);
-const [soldier, michelle] = await Promise.all([gltf.loadAsync('/game-assets/Soldier.glb'), gltf.loadAsync('/game-assets/Michelle.glb')]);
+const [soldier, michelle, xbot] = await Promise.all([gltf.loadAsync('/game-assets/Soldier.glb'), gltf.loadAsync('/game-assets/Michelle.glb'),
+  gltf.loadAsync('/game-assets/Xbot.glb').catch(() => null)]);
+/** Mixamo characters can name bones "mixamorig1:Hips", "mixamorig5:Hips"…: make them all "mixamorigHips". */
+function normalizeRig(obj) {
+  const fix = (n) => n.replace(/^mixamorig\d*:?/i, 'mixamorig');
+  obj.traverse((o) => { if (o.name) o.name = fix(o.name); });
+  for (const a of obj.animations || []) for (const t of a.tracks) t.name = fix(t.name);
+  return obj;
+}
 // Your own characters, if you've put them in game-assets\\Characters (him.fbx / her.fbx or .glb).
 const CUSTOM = {};
+const CHAR_NOTES = []; // shown on screen once the game starts
 try {
   const list = await (await fetch('/api/game/characters', { cache: 'no-store' })).json();
   for (const who of ['him', 'her']) {
     if (!list[who]) continue;
     try {
       const loaded = /\.glb$/i.test(list[who].split('?')[0]) ? (await gltf.loadAsync(list[who])).scene : await new FBXLoader(manager).loadAsync(list[who]);
+      normalizeRig(loaded);
       let ok = false; loaded.traverse((o) => { if (o.isSkinnedMesh) ok = true; });
-      if (ok && loaded.getObjectByName('mixamorigHips')) CUSTOM[who] = loaded;
-      else console.warn(`${who}: not a Mixamo-rigged character (needs the Mixamo skeleton), using the default`);
-    } catch (e) { console.warn(`Could not load your ${who} character:`, e.message); }
+      if (ok && loaded.getObjectByName('mixamorigHips')) { CUSTOM[who] = loaded; CHAR_NOTES.push(`✅ ${who}.fbx loaded`); }
+      else CHAR_NOTES.push(`⚠️ ${who}: not a Mixamo character (no Mixamo skeleton), using the default`);
+    } catch (e) { CHAR_NOTES.push(`⚠️ Couldn't load ${who}: ${e.message}`); }
   }
 } catch { /* none */ }
 const clip = (g, name) => g.animations.find((a) => a.name === name);
@@ -408,8 +418,11 @@ for (const [g, root] of [[soldier, soldier.scene], [michelle, michelle.scene]]) 
 function bodyFrame(root) {
   const B = bonesOf(root);
   const p = (n) => B[n].getWorldPosition(new THREE.Vector3());
-  const right = p('mixamorigRightForeArm').sub(p('mixamorigRightArm')).normalize();
+  // Side-to-side from the hips (works whatever the arms are doing), up from hips to head.
   const up = p('mixamorigHead').sub(p('mixamorigHips')).normalize();
+  const right = (B.mixamorigRightUpLeg && B.mixamorigLeftUpLeg ? p('mixamorigRightUpLeg').sub(p('mixamorigLeftUpLeg'))
+    : p('mixamorigRightForeArm').sub(p('mixamorigRightArm')));
+  right.addScaledVector(up, -right.dot(up)).normalize();
   // Facing +Z, a person's right hand is toward -X: so front = up x right, and the frame
   // (left, up, front) is right-handed. (right x up pointed backwards: everyone walked backwards.)
   const left = right.clone().negate();
@@ -418,6 +431,60 @@ function bodyFrame(root) {
   return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(left, upO, fwd));
 }
 const FRAME = { soldier: bodyFrame(soldier.scene), michelle: bodyFrame(michelle.scene) };
+/**
+ * Put a skeleton into a T-pose (if it isn't in one): each spine/arm/leg bone is turned so it
+ * points the same way, relative to the body, as in the Soldier's T-pose. Retargeting compares
+ * movements against the rest pose, so a source resting in another pose (e.g. some "Without Skin"
+ * downloads) would otherwise put every movement off (arms forward like a zombie).
+ */
+const CHAIN = [['Spine', 'Spine1'], ['Spine1', 'Spine2'], ['Spine2', 'Neck'], ['Neck', 'Head'],
+  ['LeftShoulder', 'LeftArm'], ['LeftArm', 'LeftForeArm'], ['LeftForeArm', 'LeftHand'], ['LeftHand', 'LeftHandMiddle1'],
+  ['RightShoulder', 'RightArm'], ['RightArm', 'RightForeArm'], ['RightForeArm', 'RightHand'], ['RightHand', 'RightHandMiddle1'],
+  ['LeftUpLeg', 'LeftLeg'], ['LeftLeg', 'LeftFoot'], ['RightUpLeg', 'RightLeg'], ['RightLeg', 'RightFoot']];
+function isTPose(root) {
+  const B = bonesOf(root);
+  root.updateMatrixWorld(true);
+  const d = (a, b) => B[b].getWorldPosition(new THREE.Vector3()).sub(B[a].getWorldPosition(new THREE.Vector3())).normalize();
+  if (!B.mixamorigRightArm || !B.mixamorigLeftArm) return true;
+  return Math.abs(d('mixamorigRightArm', 'mixamorigRightForeArm').y) < 0.3 && Math.abs(d('mixamorigLeftArm', 'mixamorigLeftForeArm').y) < 0.3
+    && Math.abs(d('mixamorigRightForeArm', 'mixamorigRightHand').y) < 0.35;
+}
+/**
+ * Your Mixamo downloads were made on X Bot. If one doesn't rest in a T-pose, give its bones
+ * X Bot's own resting rotations (exactly what the recording is relative to).
+ */
+const XBOT_REST = {};
+if (xbot) { const XB = bonesOf(xbot.scene); for (const [n, bone] of Object.entries(XB)) XBOT_REST[n] = bone.quaternion.clone(); }
+function ensureTPose(root) {
+  if (isTPose(root)) return false;
+  const B0 = bonesOf(root);
+  const names = Object.keys(B0);
+  if (xbot && names.length && names.every((n) => XBOT_REST[n]) && Object.keys(XBOT_REST).every((n) => B0[n])) {
+    for (const n of names) B0[n].quaternion.copy(XBOT_REST[n]);
+    root.updateMatrixWorld(true);
+    if (isTPose(root)) return 'xbot';
+  }
+  const B = bonesOf(root), R = bonesOf(SKEL.soldier);
+  SKEL.soldier.updateMatrixWorld(true);
+  const refInv = FRAME.soldier.clone().invert();
+  const frameQ = bodyFrame(root);
+  const wp = (o) => o.getWorldPosition(new THREE.Vector3());
+  const q = new THREE.Quaternion(), pq = new THREE.Quaternion(), wq = new THREE.Quaternion();
+  for (const [a, b] of CHAIN) {
+    const sa = B[`mixamorig${a}`], sb = B[`mixamorig${b}`], ra = R[`mixamorig${a}`], rb = R[`mixamorig${b}`];
+    if (!sa || !sb || !ra || !rb) continue;
+    root.updateMatrixWorld(true);
+    const want = wp(rb).sub(wp(ra)).normalize().applyQuaternion(refInv).applyQuaternion(frameQ);
+    const cur = wp(sb).sub(wp(sa)).normalize();
+    q.setFromUnitVectors(cur, want);
+    sa.getWorldQuaternion(wq); wq.premultiply(q);
+    sa.parent.getWorldQuaternion(pq);
+    sa.quaternion.copy(pq.invert().multiply(wq));
+  }
+  root.updateMatrixWorld(true);
+  return true;
+}
+for (const k of ['him', 'her']) if (CUSTOM[k]) ensureTPose(CUSTOM[k]);
 FRAME.him = CUSTOM.him ? bodyFrame(CUSTOM.him) : FRAME.soldier;
 FRAME.her = CUSTOM.her ? bodyFrame(CUSTOM.her) : FRAME.michelle;
 /** Turn needed so a model faces +Z (the way the game expects) at rotation 0. */
@@ -1029,6 +1096,7 @@ async function loadMocap() {
         const obj = await files.get(pick.url);
         const anim = obj.animations && obj.animations[0];
         if (!anim) continue;
+        if (!obj.__ready) { normalizeRig(obj); obj.__fixedTPose = ensureTPose(obj); obj.__ready = true; }
         obj.updateMatrixWorld(true);
         const c = borrow(anim, { root: obj, frame: obj.__frame || (obj.__frame = bodyFrame(obj)) }, kind);
         c.name = `${move}:${pick.description || pick.name}`;
@@ -1044,15 +1112,18 @@ async function loadMocap() {
     }
   }
   if (got) toast(`🎞️ ${got} real motion-captured moves loaded`);
+  else toast('🎞️ No Mixamo moves found yet (game-assets\\Mixamo + manifest.json)');
 }
 function toast(t) {
   const el = document.createElement('div'); el.className = 'hud-pill game-toast'; el.textContent = t;
-  document.body.appendChild(el); setTimeout(() => el.remove(), 4000);
+  const prev = document.querySelectorAll('.game-toast').length; el.style.marginTop = `${prev * 44}px`;
+  document.body.appendChild(el); setTimeout(() => el.remove(), 7000);
 }
 
 updateEnv(true);
 setupEffects();
+if (CHAR_NOTES.length) setTimeout(() => toast(CHAR_NOTES.join('  ·  ')), 400);
 loadMocap();
 $('loading').classList.add('hidden');
 renderer.setAnimationLoop(tick);
-window.__game = { doAct, MOCAP_LOADED, loadMocap, borrow, bodyFrame, FRAME, CLIPS, BASE, SKEL, soldier, michelle, SkeletonUtils, shotOff: () => { shot = null; shotMix = 0; }, forceShot: () => { shotMix = 1; }, setHeading: (h) => { heading = h; }, me, others, scene, camera, renderer, labels, tick, setCam: (yaw, pitch, dist) => { camYaw = yaw; camPitch = pitch; camDist = dist; camTarget.copy(me.root.position).y += 1.5; }, setTime: (t) => { dayT = t; updateEnv(true); }, step: (n = 1) => { for (let i = 0; i < n; i++) tick(); } };
+window.__game = { xbot, XBOT_REST, normalizeRig, ensureTPose, isTPose, doAct, MOCAP_LOADED, loadMocap, borrow, bodyFrame, FRAME, CLIPS, BASE, SKEL, soldier, michelle, SkeletonUtils, shotOff: () => { shot = null; shotMix = 0; }, forceShot: () => { shotMix = 1; }, setHeading: (h) => { heading = h; }, me, others, scene, camera, renderer, labels, tick, setCam: (yaw, pitch, dist) => { camYaw = yaw; camPitch = pitch; camDist = dist; camTarget.copy(me.root.position).y += 1.5; }, setTime: (t) => { dayT = t; updateEnv(true); }, step: (n = 1) => { for (let i = 0; i < n; i++) tick(); } };
