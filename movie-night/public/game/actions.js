@@ -141,6 +141,7 @@ export function applyPoses(avatar, find) {
       }
       case 'kiss': {
         if (!O) break;
+        if (avatar.mocap && avatar.mocap.has('kiss')) break; // the recorded kiss does it all
         // Lean in until the faces meet; heads tilt opposite ways; hands on waist / shoulders.
         const myHead = wpos(R.head, new THREE.Vector3()), theirHead = wpos(O.head, new THREE.Vector3());
         const gap = Math.hypot(theirHead.x - myHead.x, theirHead.z - myHead.z);

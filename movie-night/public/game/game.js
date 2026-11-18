@@ -478,7 +478,7 @@ const CLIPS = {
 };
 const BASE = { him: soldier.scene, her: michelle.scene };
 const MOCAP_LOADED = new Map(); // move -> Mixamo animation name
-const ONCE = new Set(['wave', 'hug', 'kiss', 'slap', 'flinch', 'cheer']); // play once, not on a loop
+const ONCE = new Set(['wave', 'hug', 'kiss', 'slap', 'flinch', 'cheer', 'blowkiss', 'laugh', 'clap']); // play once, not on a loop
 const HEIGHT = { him: 1.8, her: 1.68 };
 const baseScale = {};
 for (const k of ['him', 'her']) {
@@ -563,6 +563,9 @@ addEventListener('keydown', (e) => {
   keys.add(e.code);
   if (e.code === 'KeyG') toggleDance();
   if (e.code === 'KeyQ') doAct('wave');
+  if (e.code === 'KeyL') emote('laugh');
+  if (e.code === 'KeyC') emote('clap');
+  if (e.code === 'KeyV') emote('cheer');
   if (e.code === 'KeyK') { if (nearest()) doAct('kiss'); else blowKiss(); }
   if (e.code === 'KeyH') doAct('hug');
   if (e.code === 'KeyJ') doAct('slap');
@@ -603,12 +606,16 @@ addEventListener('wheel', (e) => { camDist = clamp(camDist + e.deltaY * 0.005, 2
   zone.addEventListener('pointerup', end); zone.addEventListener('pointercancel', end);
 }
 const toggleDance = () => { dancing = !dancing; $('tDance').classList.toggle('on', dancing); $('dDance').classList.toggle('on', dancing); };
-function blowKiss() { me.heart('💋'); send({ t: 'gemote', e: 'kiss' }); }
+function blowKiss() { me.gesture('blowkiss'); setTimeout(() => me.heart('💋'), 700); send({ t: 'gemote', e: 'kiss' }); }
+/** Laugh / clap / celebrate (real moves if you have them, otherwise just the emoji). */
+const EMOTE_ICON = { laugh: '😂', clap: '👏', cheer: '🎉' };
+function emote(e) { me.gesture(e); me.heart(EMOTE_ICON[e]); send({ t: 'gemote', e }); }
 $('tRun').onclick = () => { runToggle = !runToggle; $('tRun').classList.toggle('on', runToggle); };
 $('tDance').onclick = toggleDance; $('dDance').onclick = toggleDance;
 $('tKiss').onclick = () => (nearest() ? doAct('kiss') : blowKiss());
 $('dKiss').onclick = () => (nearest() ? doAct('kiss') : blowKiss());
 $('tWave').onclick = () => doAct('wave'); $('dWave').onclick = () => doAct('wave');
+for (const b of document.querySelectorAll('[data-emote]')) b.onclick = () => emote(b.dataset.emote);
 for (const b of document.querySelectorAll('#acts [data-act]')) b.onclick = () => doAct(b.dataset.act);
 
 // ---- Together: hug, kiss, a cheeky slap, holding hands, waving ----------------------------
@@ -797,8 +804,12 @@ function connect() {
       if (!(o.pinUntil > performance.now())) { o.target.set(...m.p); o.rot = m.r; }
       o.av.play(m.a); o.seen = performance.now();
       updatePartner();
-    } else if (m.t === 'gemote' && others.has(m.from)) others.get(m.from).av.heart(m.e === 'kiss' ? '💋' : '💖');
-    else if (m.t === 'gact' && m.from !== myName) onAct(m);
+    } else if (m.t === 'gemote' && others.has(m.from)) {
+      const av = others.get(m.from).av;
+      if (m.e === 'kiss') { av.gesture('blowkiss'); setTimeout(() => av.heart('💋'), 700); }
+      else if (EMOTE_ICON[m.e]) { av.gesture(m.e); av.heart(EMOTE_ICON[m.e]); }
+      else av.heart('💖');
+    } else if (m.t === 'gact' && m.from !== myName) onAct(m);
     else if (m.t === 'gleave' && others.has(m.from)) {
       if (leading === m.from || following === m.from) stopHands(false);
       others.get(m.from).av.dispose(); others.delete(m.from); updatePartner(); updateActs();
@@ -935,6 +946,27 @@ function tick() {
   if (fpsT > 1) { $('fps').textContent = `${Math.round(frames / fpsT)} fps · ${qName}`; frames = 0; fpsT = 0; }
 }
 // ---- Real motion-captured moves (your Mixamo downloads in game-assets\\Mixamo) ------------------
+// Hand-picked from your Mixamo downloads (by their description), best first, for each of you.
+const PICKS = {
+  him: {
+    idle: ['Breathing Idle', 'Weight Shift Idle', 'Standing Idle'],
+    walk: ['Walking Forwards', 'Male Happy Walk', 'Walking With A Swagger'],
+    run: ['Standard Running', 'Medium Speed Running', 'Running Forward Quickly'],
+    dance: ['Male Partner Salsa Variation One', 'Male Salsa Variation Eight'],
+    kiss: ['Kissing A Shorter Person For A Short Period', 'Kissing A Shorter Person For A Long Period'],
+    blowkiss: ['Blowing A Kiss'], wave: ['Waving', 'Aj Waving Gesture'],
+    flinch: ['Being Surprised And Looking Right'], laugh: ['Laughing Standing'], clap: ['Clap While Standing'], cheer: ['Celebrating After A Win'],
+  },
+  her: {
+    idle: ['Neutral Idle', 'Happy Idle Variation 1', 'Breathing Idle'],
+    walk: ['Feminine Walk Forward', 'Female Walk'],
+    run: ['Female Run Forward', 'Happy Run Forward', 'Standard Running'],
+    dance: ['Female Salsa Dancing', 'Female Samba Pagode Variation Five- Loop'],
+    kiss: ['Kissing A Taller Person For A Short Period', 'Kissing A Taller Person For A Long Period'],
+    blowkiss: ['Blowing A Kiss'], wave: ['Waving', 'Aj Waving Gesture'],
+    flinch: ['Being Surprised And Looking Right'], laugh: ['Laughing Standing'], clap: ['Clap While Standing'], cheer: ['Celebrating After A Win'],
+  },
+};
 const MOCAP = {
   // move: [words to look for (best first), words that rule a file out]
   idle: [['breathing idle', 'happy idle', 'standing idle', 'idle'], ['sword', 'rifle', 'pistol', 'gun', 'ninja', 'mutant', 'zombie', 'injured', 'fight', 'boxing', 'orc', 'dwarf', 'sit', 'crouch', 'magic', 'spell', 'drunk', 'warrior', 'to ', 'transition', 'turn']],
@@ -955,8 +987,10 @@ async function loadMocap() {
   const text = (a) => ` ${a.name} ${a.description} ${a.file} `.toLowerCase();
   const fbx = new FBXLoader();
   let got = 0;
-  for (const [move, [want, avoid]] of Object.entries(MOCAP)) {
-    // Best match: the earliest wanted words, no ruled-out words, then the shortest name.
+  const byDesc = (d) => list.find((a) => a.description.toLowerCase() === d.toLowerCase());
+  const byWords = (move) => {
+    if (!MOCAP[move]) return null;
+    const [want, avoid] = MOCAP[move];
     let best = null, bestScore = Infinity;
     for (const a of list) {
       const t = text(a);
@@ -966,26 +1000,33 @@ async function loadMocap() {
       const score = i * 1000 + a.name.length;
       if (score < bestScore) { bestScore = score; best = a; }
     }
-    if (!best) continue;
-    try {
-      const obj = await fbx.loadAsync(best.url);
-      const anim = obj.animations && obj.animations[0];
-      if (!anim) continue;
-      obj.updateMatrixWorld(true);
-      const src = { root: obj, frame: bodyFrame(obj) };
-      for (const kind of ['him', 'her']) {
-        const c = borrow(anim, src, kind === 'him' ? 'soldier' : 'michelle');
-        c.name = `${move}:${best.name}`;
+    return best;
+  };
+  const files = new Map(); // url -> loaded FBX (each file is loaded once)
+  const moves = new Set([...Object.keys(MOCAP), ...Object.keys(PICKS.him), ...Object.keys(PICKS.her)]);
+  for (const move of moves) {
+    for (const kind of ['him', 'her']) {
+      // The hand-picked version for this person (from the manifest), else the best name match.
+      const pick = (PICKS[kind][move] || []).map(byDesc).find(Boolean) || byWords(move);
+      if (!pick) continue;
+      try {
+        if (!files.has(pick.url)) files.set(pick.url, fbx.loadAsync(pick.url));
+        const obj = await files.get(pick.url);
+        const anim = obj.animations && obj.animations[0];
+        if (!anim) continue;
+        obj.updateMatrixWorld(true);
+        const c = borrow(anim, { root: obj, frame: obj.__frame || (obj.__frame = bodyFrame(obj)) }, kind === 'him' ? 'soldier' : 'michelle');
+        c.name = `${move}:${pick.description || pick.name}`;
         CLIPS[kind][move] = c;
         for (const av of [me, ...[...others.values()].map((o) => o.av)]) {
           if (av.kind !== kind) continue;
           av.setClip(move, c);
           (av.mocap || (av.mocap = new Set())).add(move);
         }
-      }
-      MOCAP_LOADED.set(move, best.name);
-      got++;
-    } catch (e) { console.warn('Could not use', best.file, e.message); }
+        if (!MOCAP_LOADED.has(move)) got++;
+        MOCAP_LOADED.set(move, pick.description || pick.name);
+      } catch (e) { console.warn('Could not use', pick.file, e.message); }
+    }
   }
   if (got) toast(`🎞️ ${got} real motion-captured moves loaded`);
 }
