@@ -103,7 +103,42 @@ const MIME = {
   '.json': 'application/json', '.m3u8': 'application/vnd.apple.mpegurl', '.m4s': 'video/iso.segment',
   '.mp4': 'video/mp4', '.vtt': 'text/vtt; charset=utf-8', '.jpg': 'image/jpeg', '.png': 'image/png',
   '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.webmanifest': 'application/manifest+json',
+  '.glb': 'model/gltf-binary',
 };
+
+// ---- Our world (the game): 3D models & textures --------------------------------------------
+// Not stored in GitHub: the laptop downloads each one once, from the three.js project, and keeps it.
+const GAME_ASSETS_DIR = path.join(ROOT, 'game-assets');
+const THREE_EXAMPLES = 'https://raw.githubusercontent.com/mrdoob/three.js/r170/examples';
+const GAME_ASSETS = {
+  'Soldier.glb': `${THREE_EXAMPLES}/models/gltf/Soldier.glb`,
+  'Michelle.glb': `${THREE_EXAMPLES}/models/gltf/Michelle.glb`,
+  'grass.jpg': `${THREE_EXAMPLES}/textures/terrain/grasslight-big.jpg`,
+  'brick_diffuse.jpg': `${THREE_EXAMPLES}/textures/brick_diffuse.jpg`,
+  'brick_bump.jpg': `${THREE_EXAMPLES}/textures/brick_bump.jpg`,
+  'brick_roughness.jpg': `${THREE_EXAMPLES}/textures/brick_roughness.jpg`,
+  'wood_diffuse.jpg': `${THREE_EXAMPLES}/textures/hardwood2_diffuse.jpg`,
+  'wood_bump.jpg': `${THREE_EXAMPLES}/textures/hardwood2_bump.jpg`,
+  'wood_roughness.jpg': `${THREE_EXAMPLES}/textures/hardwood2_roughness.jpg`,
+  'waternormals.jpg': `${THREE_EXAMPLES}/textures/waternormals.jpg`,
+  'disturb.jpg': `${THREE_EXAMPLES}/textures/disturb.jpg`,
+};
+const gameDownloads = new Map();
+function gameAsset(name) {
+  const file = path.join(GAME_ASSETS_DIR, name);
+  if (fs.existsSync(file)) return Promise.resolve(file);
+  if (!gameDownloads.has(name)) {
+    gameDownloads.set(name, (async () => {
+      const r = await fetch(GAME_ASSETS[name]);
+      if (!r.ok) throw new Error(`${r.status}`);
+      fs.mkdirSync(GAME_ASSETS_DIR, { recursive: true });
+      fs.writeFileSync(`${file}.part`, Buffer.from(await r.arrayBuffer()));
+      fs.renameSync(`${file}.part`, file);
+      return file;
+    })().finally(() => gameDownloads.delete(name)));
+  }
+  return gameDownloads.get(name);
+}
 
 function parseCookies(header) {
   const out = {};
@@ -256,6 +291,22 @@ const server = http.createServer((req, res) => {
     sendFile(req, res, file, cache);
     return;
   }
+  if (pathname.startsWith('/vendor/three/')) {
+    // The 3D engine for Our world (only its build and add-ons).
+    const rel = pathname.slice('/vendor/three/'.length);
+    const file = /^(build|examples\/jsm)\//.test(rel) ? within(path.join(ROOT, 'node_modules', 'three'), rel) : null;
+    if (!file) { res.writeHead(403); res.end(); return; }
+    sendFile(req, res, file, 'private, max-age=86400');
+    return;
+  }
+  if (pathname.startsWith('/game-assets/')) {
+    const name = decodeURIComponent(pathname.slice('/game-assets/'.length));
+    if (!Object.prototype.hasOwnProperty.call(GAME_ASSETS, name)) { res.writeHead(404); res.end(); return; }
+    gameAsset(name).then((file) => sendFile(req, res, file, 'private, max-age=31536000, immutable'))
+      .catch(() => { res.writeHead(502, { 'Content-Type': 'text/plain' }); res.end('Could not download this game file. Is the laptop online?'); });
+    return;
+  }
+  if (pathname === '/game' || pathname === '/game/') { sendFile(req, res, path.join(PUBLIC, 'game', 'index.html'), 'no-cache'); return; }
   if (pathname === '/vendor/hls.min.js') {
     sendFile(req, res, path.join(ROOT, 'node_modules', 'hls.js', 'dist', 'hls.min.js'), 'private, max-age=86400');
     return;
@@ -305,7 +356,7 @@ function publicState() {
 }
 
 function peers() {
-  return [...clients.values()].map((c) => ({
+  return [...clients.values()].filter((c) => !c.game).map((c) => ({
     id: c.id, name: c.name, role: c.role, buffer: c.buffer, full: c.full, stalled: c.stalled,
     quality: c.quality, bw: c.bw, ready: c.movieId === room.movieId,
     visible: c.visible !== false, error: c.error || null, late: !!c.late, hevc: c.hevc, shaky: !!c.shaky,
@@ -386,13 +437,21 @@ function handle(ws, c, msg) {
   switch (msg.t) {
     case 'hello':
       c.name = String(msg.name || c.name).slice(0, 30);
+      if (msg.game) {
+        // Our world: its own connection, not part of the movie (no take-over, not in the bubbles).
+        c.game = true;
+        c.role = c.isHost ? 'host' : 'guest';
+        send(ws, { t: 'ghello', you: c.name });
+        for (const [otherWs, o] of clients) if (o.game && otherWs !== ws && o.gstate) send(ws, { t: 'gpos', from: o.name, ...o.gstate });
+        break;
+      }
       c.role = c.isHost || msg.role === 'host' ? 'host' : 'guest';
       c.hevc = typeof msg.hevc === 'boolean' ? msg.hevc : null;
       rememberDevice(c, msg.deviceId);
       learnWhoIsWho(c);
       // One of you at a time: a newer window/browser/device takes over from the older one.
       for (const [otherWs, other] of clients) {
-        if (otherWs !== ws && other.name.trim().toLowerCase() === c.name.trim().toLowerCase()) {
+        if (otherWs !== ws && !other.game && other.name.trim().toLowerCase() === c.name.trim().toLowerCase()) {
           send(otherWs, { t: 'replaced' });
           clients.delete(otherWs);
           setTimeout(() => otherWs.close(4001, 'Opened somewhere else'), 100);
@@ -506,6 +565,22 @@ function handle(ws, c, msg) {
     case 'intermissionEnd':
       if (room.intermission) endIntermission();
       break;
+    case 'gpos': case 'gemote': {
+      // Our world: pass where you are / what you're doing to the other player(s).
+      if (!c.game) return;
+      const out = { t: msg.t, from: c.name };
+      if (msg.t === 'gpos') {
+        if (!Array.isArray(msg.p) || msg.p.length !== 3 || !msg.p.every(Number.isFinite)) return;
+        out.p = msg.p.map((v) => Math.round(v * 100) / 100);
+        out.r = Number(msg.r) || 0;
+        out.a = ['idle', 'walk', 'run', 'dance'].includes(msg.a) ? msg.a : 'idle';
+        out.m = msg.m === 'her' ? 'her' : 'him';
+        c.gstate = { p: out.p, r: out.r, a: out.a, m: out.m };
+      } else out.e = ['kiss', 'wave', 'heart'].includes(msg.e) ? msg.e : 'heart';
+      const data = JSON.stringify(out);
+      for (const [otherWs, o] of clients) if (o.game && otherWs !== ws && otherWs.readyState === otherWs.OPEN) otherWs.send(data);
+      break;
+    }
     case 'want': {
       // "Watch this now" on a movie that's still waiting to be converted.
       const id = String(msg.movieId || '');
@@ -544,6 +619,7 @@ wss.on('connection', (ws, req) => {
   });
   ws.on('close', () => {
     clients.delete(ws);
+    if (c.game) { for (const [otherWs, o] of clients) if (o.game) send(otherWs, { t: 'gleave', from: c.name }); return; }
     features.onDisconnect(c);
     // If someone drops while we're held waiting for them, don't wait forever.
     evaluate();

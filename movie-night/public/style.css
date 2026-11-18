@@ -974,3 +974,4 @@ blockquote.pull { margin: 0; padding: 4px 0 4px 14px; border-left: 4px solid var
 .who-ask { position: fixed; right: 16px; bottom: 16px; z-index: 50; width: min(380px, calc(100% - 32px)); background: var(--panel); border: 1px solid var(--line);
   border-radius: 18px; padding: 14px 16px; box-shadow: 0 16px 40px rgba(74, 51, 38, .3); display: grid; gap: 6px; animation: wslide .4s ease-out; }
 .who-ask .row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+a.tab-link { text-decoration: none; display: inline-flex; align-items: center; }

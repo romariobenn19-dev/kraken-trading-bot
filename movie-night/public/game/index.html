@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#1d2433">
+  <title>Our World</title>
+  <link rel="icon" href="/icon.png">
+  <link rel="stylesheet" href="/game/game.css">
+  <script type="importmap">
+    { "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/" } }
+  </script>
+</head>
+<body>
+  <canvas id="view"></canvas>
+  <div id="labels"></div>
+
+  <header class="hud-top">
+    <a href="/" class="hud-btn" title="Back to Movie Night">‹ Movie Night</a>
+    <div class="hud-title"><b>Our World</b><span>look test</span></div>
+    <span class="spacer"></span>
+    <span id="partner" class="hud-pill">Waiting for your love…</span>
+    <button id="timeBtn" class="hud-btn" title="Skip to day / night">🌙</button>
+    <select id="quality" class="hud-btn" title="Graphics quality" aria-label="Graphics quality">
+      <option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>
+    </select>
+    <span id="fps" class="hud-pill">– fps</span>
+  </header>
+
+  <div id="help" class="help">WASD / arrows to walk · Shift to run · drag to look around · scroll to zoom · <b>G</b> dance · <b>K</b> kiss</div>
+
+  <div id="touch" class="touch hidden">
+    <div id="stickZone" class="stick-zone"><div id="stick" class="stick"><i></i></div></div>
+    <div class="touch-btns">
+      <button id="tRun" aria-label="Run">🏃</button>
+      <button id="tDance" aria-label="Dance">💃</button>
+      <button id="tKiss" aria-label="Blow a kiss">💋</button>
+    </div>
+  </div>
+  <div class="touch-btns desk">
+    <button id="dDance" title="Dance (G)">💃</button>
+    <button id="dKiss" title="Blow a kiss (K)">💋</button>
+  </div>
+
+  <div id="loading" class="loading">
+    <div class="load-card">
+      <h1>Our World</h1>
+      <p id="loadText">Getting the world ready…</p>
+      <div class="bar"><i id="loadBar"></i></div>
+      <p class="small">The first time takes a little longer: the laptop fetches the 3D models once and keeps them.</p>
+    </div>
+  </div>
+
+  <script type="module" src="/game/game.js"></script>
+</body>
+</html>

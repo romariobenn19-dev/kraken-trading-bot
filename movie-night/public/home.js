@@ -19,11 +19,11 @@ async function loadFeatures() {
 }
 
 // ---- Tabs ------------------------------------------------------------------------------
-for (const b of document.querySelectorAll('.tab')) b.onclick = () => showTab(b.dataset.tab);
+for (const b of document.querySelectorAll('.tab[data-tab]')) b.onclick = () => showTab(b.dataset.tab);
 function showTab(tab) {
   currentTab = tab;
   store.set('mn_tab', tab);
-  for (const b of document.querySelectorAll('.tab')) {
+  for (const b of document.querySelectorAll('.tab[data-tab]')) {
     b.classList.toggle('on', b.dataset.tab === tab);
     b.setAttribute('aria-selected', String(b.dataset.tab === tab));
   }

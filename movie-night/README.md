@@ -85,6 +85,15 @@ If Windows says *"Windows protected your PC"*, click **More info**, then **Run a
 
 **🔔 Notifications (her tablet):** tap 🔔 Notifications once. She gets a notification when a new movie is ready, when you start Movie Night, and 30 minutes before a planned movie night.
 
+## 🎮 Our world (look test)
+
+The first step toward your own game: tap **🎮 Our world** at the top of Movie Night. It's a small valley with your house, a lake, trees and a sun that moves through the day into night (the porch light and windows glow at night). You walk around together and see each other live, with your pet names over your heads.
+
+- **Laptop:** WASD or the arrow keys to walk, Shift to run, drag to look around, scroll to zoom, **G** to dance, **K** to blow a kiss.
+- **Tablet:** the left thumb stick to walk (push it all the way to run), drag on the right to look around, buttons for 🏃 run, 💃 dance and 💋 kiss.
+- **Graphics** (top right): High, Medium or Low. The laptop starts on High, the tablet on Low; the fps number shows how smoothly it runs.
+- The 3D models and textures (about 12 MB) are fetched by the laptop the first time and kept there; they aren't stored in GitHub. The characters come from the three.js examples (Mixamo models), for your own use.
+
 ## Install it as an app
 
 **Laptop:** open Movie Night in Chrome or Edge and click **⬇ Install app** (top right), or the install icon at the end of the address bar. It gets its own window and a desktop / Start menu icon.
