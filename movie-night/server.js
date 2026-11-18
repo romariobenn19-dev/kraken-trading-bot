@@ -123,6 +123,43 @@ const GAME_ASSETS = {
   'waternormals.jpg': `${THREE_EXAMPLES}/textures/waternormals.jpg`,
   'disturb.jpg': `${THREE_EXAMPLES}/textures/disturb.jpg`,
 };
+/** game-assets/Mixamo (any upper/lower case): the animations you downloaded from Mixamo. */
+function mixamoDir() {
+  try {
+    const d = fs.readdirSync(GAME_ASSETS_DIR, { withFileTypes: true }).find((e) => e.isDirectory() && e.name.toLowerCase() === 'mixamo');
+    return d ? path.join(GAME_ASSETS_DIR, d.name) : null;
+  } catch { return null; }
+}
+function listMixamo() {
+  const dir = mixamoDir();
+  if (!dir) return [];
+  const files = [], manifests = [];
+  const walk = (d, rel, depth) => {
+    let list = [];
+    try { list = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of list) {
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory() && depth < 3) walk(path.join(d, e.name), r, depth + 1);
+      else if (/\.fbx$/i.test(e.name)) files.push(r);
+      else if (/^manifest.*\.json$/i.test(e.name)) manifests.push(path.join(d, e.name));
+    }
+  };
+  walk(dir, '', 0);
+  // The manifest (from the download script) knows each file's real name and description.
+  const info = new Map();
+  for (const m of manifests) {
+    try {
+      for (const a of JSON.parse(fs.readFileSync(m, 'utf8'))) if (a && a.file) info.set(path.basename(a.file).toLowerCase(), a);
+    } catch { /* not readable */ }
+  }
+  return files.map((rel) => {
+    const base = path.basename(rel);
+    const key = base.toLowerCase().replace(/ \(\d+\)(\.fbx)$/i, '$1'); // Chrome adds " (1)" to repeats
+    const a = info.get(base.toLowerCase()) || info.get(key) || {};
+    return { url: `/game-assets/mixamo/${rel.split('/').map(encodeURIComponent).join('/')}`, file: rel,
+      name: a.name || base.replace(/\.fbx$/i, '').replace(/\[[^\]]*\]/g, '').trim(), description: a.description || '', cat: a.cat || rel.split('/').slice(-2, -1)[0] || '' };
+  });
+}
 const gameDownloads = new Map();
 function gameAsset(name) {
   const file = path.join(GAME_ASSETS_DIR, name);
@@ -296,6 +333,19 @@ const server = http.createServer((req, res) => {
     const rel = pathname.slice('/vendor/three/'.length);
     const file = /^(build|examples\/jsm)\//.test(rel) ? within(path.join(ROOT, 'node_modules', 'three'), rel) : null;
     if (!file) { res.writeHead(403); res.end(); return; }
+    sendFile(req, res, file, 'private, max-age=86400');
+    return;
+  }
+  if (pathname === '/api/game/anims') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ anims: listMixamo() }));
+    return;
+  }
+  if (pathname.toLowerCase().startsWith('/game-assets/mixamo/')) {
+    const dir = mixamoDir();
+    const rel = decodeURIComponent(pathname.slice('/game-assets/mixamo/'.length));
+    const file = dir && /\.fbx$/i.test(rel) ? within(dir, rel) : null;
+    if (!file) { res.writeHead(404); res.end(); return; }
     sendFile(req, res, file, 'private, max-age=86400');
     return;
   }

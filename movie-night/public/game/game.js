@@ -3,6 +3,7 @@
  * 3D engine: three.js. Models & textures come from the laptop (/game-assets/). */
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { Water } from 'three/addons/objects/Water.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
@@ -369,7 +370,15 @@ const clip = (g, name) => g.animations.find((a) => a.name === name);
 // Michelle's samba. The two skeletons have the same joints but different resting poses, so a
 // borrowed animation is converted: each joint keeps its movement *relative to its rest pose*
 // (copying the raw rotations turned her upside down). Position/scale tracks are dropped.
-function bonesOf(root) { const b = {}; root.traverse((o) => { if (o.isBone) b[o.name] = o; }); return b; }
+/**
+ * Bones by name. In some Mixamo files each bone has a same-named copy attached inside it;
+ * the animation moves the outer one, so use that.
+ */
+function bonesOf(root) {
+  const b = {};
+  root.traverse((o) => { if (o.isBone && !b[o.name] && !(o.parent && o.parent.name === o.name)) b[o.name] = o; });
+  return b;
+}
 const SKEL = { soldier: soldier.scene, michelle: michelle.scene };
 // Both files come with a T-pose (arms straight out): put both skeletons in it, so "the same
 // pose" means the same thing for each before comparing movements.
@@ -406,7 +415,9 @@ for (const [k, root] of [['him', soldier.scene], ['her', michelle.scene]]) {
  * skeleton's own rest pose), then turn that back into the joint's local rotation.
  */
 function borrow(c, from, to) {
-  const sRoot = SKEL[from], tRoot = SKEL[to];
+  // from: 'soldier' | 'michelle' | { root, frame } (a skeleton loaded from a Mixamo file)
+  const src = typeof from === 'string' ? { root: SKEL[from], frame: FRAME[from] } : from;
+  const sRoot = src.root, tRoot = SKEL[to];
   sRoot.updateMatrixWorld(true); tRoot.updateMatrixWorld(true);
   const S = bonesOf(sRoot), T = bonesOf(tRoot);
   const order = []; tRoot.traverse((o) => { if (o.isBone && S[o.name]) order.push(o.name); });
@@ -419,7 +430,7 @@ function borrow(c, from, to) {
   const out = Object.fromEntries(order.map((n) => [n, new Float32Array(times.length * 4)]));
   const local = new THREE.Quaternion(), D = new THREE.Quaternion();
   // The two models may face different ways: carry each movement over in the other's body frame.
-  const R = FRAME[to].clone().multiply(FRAME[from].clone().invert()), Rinv = R.clone().invert();
+  const R = FRAME[to].clone().multiply(src.frame.clone().invert()), Rinv = R.clone().invert();
   for (let i = 0; i < times.length; i++) {
     const As = {}, At = {};
     for (const n of order) {
@@ -436,6 +447,26 @@ function borrow(c, from, to) {
   }
   const cl = c.clone();
   cl.tracks = order.map((n) => new THREE.QuaternionKeyframeTrack(`${n}.quaternion`, times, out[n]));
+  // The hips' up-and-down bounce (sideways/forward movement is left out: the game moves you).
+  const hipTrack = c.tracks.find((t) => t.name === 'mixamorigHips.position');
+  const sH = S.mixamorigHips, tH = T.mixamorigHips;
+  if (hipTrack && sH && tH && sH.parent && tH.parent) {
+    const hi = hipTrack.createInterpolant();
+    const sRest = sH.getWorldPosition(new THREE.Vector3()), tRest = tH.getWorldPosition(new THREE.Vector3());
+    const sGround = new THREE.Vector3().setFromMatrixPosition(sRoot.matrixWorld), tGround = new THREE.Vector3().setFromMatrixPosition(tRoot.matrixWorld);
+    const ratio = (tRest.y - tGround.y) / Math.max(1e-4, sRest.y - sGround.y);
+    const tInv = tH.parent.matrixWorld.clone().invert();
+    const ht = hipTrack.times;
+    const vals = new Float32Array(ht.length * 3);
+    const v = new THREE.Vector3();
+    for (let i = 0; i < ht.length; i++) {
+      v.fromArray(hi.evaluate(ht[i])).applyMatrix4(sH.parent.matrixWorld);
+      const dy = clamp((v.y - sRest.y) * ratio, -0.35 * (tRest.y - tGround.y), 0.25 * (tRest.y - tGround.y));
+      v.set(tRest.x, tRest.y + dy, tRest.z).applyMatrix4(tInv);
+      v.toArray(vals, i * 3);
+    }
+    cl.tracks.push(new THREE.VectorKeyframeTrack('mixamorigHips.position', ht, vals));
+  }
   return cl;
 }
 const CLIPS = {
@@ -446,6 +477,8 @@ const CLIPS = {
   },
 };
 const BASE = { him: soldier.scene, her: michelle.scene };
+const MOCAP_LOADED = new Map(); // move -> Mixamo animation name
+const ONCE = new Set(['wave', 'hug', 'kiss', 'slap', 'flinch', 'cheer']); // play once, not on a loop
 const HEIGHT = { him: 1.8, her: 1.68 };
 const baseScale = {};
 for (const k of ['him', 'her']) {
@@ -464,14 +497,35 @@ class Avatar {
     this.root.add(this.model);
     scene.add(this.root);
     this.mixer = new THREE.AnimationMixer(this.model);
-    this.actions = Object.fromEntries(Object.entries(CLIPS[kind]).map(([k, c]) => [k, this.mixer.clipAction(c)]));
+    this.actions = {};
+    this.mocap = new Set(MOCAP_LOADED.keys());
+    for (const [k, c] of Object.entries(CLIPS[kind])) {
+      this.actions[k] = this.mixer.clipAction(c);
+      if (ONCE.has(k)) { this.actions[k].setLoop(THREE.LoopOnce, 1); this.actions[k].clampWhenFinished = true; }
+    }
     this.current = 'idle';
     this.actions.idle.play();
     const tag = document.createElement('div'); tag.innerHTML = '<div class="nametag"></div>'; tag.firstChild.textContent = petName(name);
     this.tag = new CSS2DObject(tag); this.tag.position.set(0, HEIGHT[kind] + 0.35, 0);
     this.root.add(this.tag);
   }
-  play(name) {
+  /** Put in a new animation (e.g. one from Mixamo) for a move. */
+  setClip(name, clip) {
+    const old = this.actions[name];
+    const act = this.mixer.clipAction(clip);
+    if (ONCE.has(name)) { act.setLoop(THREE.LoopOnce, 1); act.clampWhenFinished = true; }
+    this.actions[name] = act;
+    if (old && this.current === name) { act.reset().play(); old.crossFadeTo(act, 0.3, false); }
+  }
+  /** A one-off full-body move (hug, wave…) from Mixamo, if we have it; walking resumes after. */
+  gesture(name, dur) {
+    if (!this.actions[name] || !this.mocap || !this.mocap.has(name)) return false;
+    this.gestureUntil = performance.now() + (dur || this.actions[name].getClip().duration) * 1000;
+    this.play(name, true);
+    return true;
+  }
+  play(name, force) {
+    if (!force && this.gestureUntil > performance.now()) return; // let the gesture finish
     if (name === this.current || !this.actions[name]) return;
     const from = this.actions[this.current], to = this.actions[name];
     to.reset().setEffectiveWeight(1).play();
@@ -581,7 +635,7 @@ function startShot(kind, partner) {
   if (c) shot = { ...c, partner, until: performance.now() + POSES[kind] * 1000 };
 }
 function doAct(a) {
-  if (a === 'wave') { pose(me, 'wave'); send({ t: 'gact', a: 'wave' }); return; }
+  if (a === 'wave') { if (!me.gesture('wave')) pose(me, 'wave'); send({ t: 'gact', a: 'wave' }); return; }
   const to = a === 'hands' && (leading || following) ? (leading || following) : nearest();
   if (!to) { if (a !== 'hands') me.say('Get closer 😉'); return; }
   const o = otherOf(to);
@@ -594,6 +648,7 @@ function doAct(a) {
     lockUntil = performance.now() + POSES[a] * 1000;
     stopHands(false); dancing = false;
     pose(me, a, { partner: to }); pose(o.av, a, { partner: myName });
+    me.gesture(a, POSES[a]); o.av.gesture(a, POSES[a]);
     // She steps into place in front of me on her screen; show her there right away on mine.
     const d = a === 'hug' ? HUG_GAP : KISS_GAP;
     o.target.set(me.root.position.x + Math.sin(heading) * d, o.target.y, me.root.position.z + Math.cos(heading) * d);
@@ -610,6 +665,7 @@ function doAct(a) {
     dancing = false;
     pose(me, 'slap', { partner: to });
     pose(o.av, 'slapped', { side: -1 });
+    me.gesture('slap', POSES.slap); setTimeout(() => o.av.gesture('flinch', 1.2), 450);
     setTimeout(() => { sound('slap'); }, 450);
     setTimeout(() => o.av.say(line), 520);
     startShot('slap', to);
@@ -638,9 +694,10 @@ function onAct(m) {
   // Their exact spot for this moment (so poses line up on both screens).
   if (Array.isArray(m.p)) { o.target.set(...m.p); o.av.root.position.set(...m.p); }
   if (Number.isFinite(m.r)) { o.rot = m.r; o.av.root.rotation.y = m.r; }
-  if (m.a === 'wave') { pose(o.av, 'wave'); return; }
+  if (m.a === 'wave') { if (!o.av.gesture('wave')) pose(o.av, 'wave'); return; }
   if (m.a === 'hug' || m.a === 'kiss') {
     pose(o.av, m.a, { partner: m.to });
+    o.av.gesture(m.a, POSES[m.a]);
     if (forMe) {
       // Step into place in front of them, facing them.
       const h = o.rot, d = m.a === 'hug' ? HUG_GAP : KISS_GAP;
@@ -649,6 +706,7 @@ function onAct(m) {
       dancing = false;
       stopHands(false);
       pose(me, m.a, { partner: m.from });
+      me.gesture(m.a, POSES[m.a]);
       setTimeout(() => sound(m.a === 'kiss' ? 'kiss' : 'chime'), m.a === 'kiss' ? 900 : 300);
       if (navigator.vibrate) { try { navigator.vibrate(40); } catch { /* not allowed */ } }
       startShot(m.a, m.from);
@@ -656,8 +714,9 @@ function onAct(m) {
     setTimeout(() => o.av.heart(m.a === 'kiss' ? '💋' : '🤗'), 1000);
   } else if (m.a === 'slap') {
     pose(o.av, 'slap', { partner: m.to });
+    o.av.gesture('slap', POSES.slap);
     const target = forMe ? me : (otherOf(m.to) || {}).av;
-    if (target) pose(target, 'slapped', { side: -1 });
+    if (target) { pose(target, 'slapped', { side: -1 }); setTimeout(() => target.gesture('flinch', 1.2), 450); }
     if (forMe) { lockUntil = performance.now() + POSES.slapped * 1000; dancing = false; startShot('slap', m.from); }
     setTimeout(() => {
       sound('slap');
@@ -875,8 +934,69 @@ function tick() {
   frames++; fpsT += dt;
   if (fpsT > 1) { $('fps').textContent = `${Math.round(frames / fpsT)} fps · ${qName}`; frames = 0; fpsT = 0; }
 }
+// ---- Real motion-captured moves (your Mixamo downloads in game-assets\\Mixamo) ------------------
+const MOCAP = {
+  // move: [words to look for (best first), words that rule a file out]
+  idle: [['breathing idle', 'happy idle', 'standing idle', 'idle'], ['sword', 'rifle', 'pistol', 'gun', 'ninja', 'mutant', 'zombie', 'injured', 'fight', 'boxing', 'orc', 'dwarf', 'sit', 'crouch', 'magic', 'spell', 'drunk', 'warrior', 'to ', 'transition', 'turn']],
+  walk: [['walking', 'walk'], ['sword', 'rifle', 'pistol', 'gun', 'zombie', 'injured', 'drunk', 'backward', 'strafe', 'turn', 'left', 'right', 'stairs', 'sneak', 'crouch', 'orc', 'dwarf', 'mutant', 'ninja', 'start', 'stop', 'to ']],
+  run: [['running', 'run'], ['sword', 'rifle', 'pistol', 'gun', 'zombie', 'injured', 'backward', 'strafe', 'turn', 'left', 'right', 'jump', 'stop', 'start', 'slide', 'orc', 'mutant', 'ninja', 'to ']],
+  dance: [['samba', 'salsa', 'dancing', 'dance'], ['slow', 'zombie', 'sword']],
+  wave: [['waving', 'wave'], ['sword', 'rifle']],
+  hug: [['hugging', 'hug'], []],
+  kiss: [['kiss'], ['blow']],
+  slap: [['slap'], []],
+  flinch: [['surprised', 'flinch', 'shocked', 'startled'], ['rifle', 'sword']],
+  cheer: [['cheering', 'cheer', 'victory', 'celebrat'], ['rifle', 'sword']],
+};
+async function loadMocap() {
+  let list = [];
+  try { list = (await (await fetch('/api/game/anims', { cache: 'no-store' })).json()).anims || []; } catch { return; }
+  if (!list.length) return;
+  const text = (a) => ` ${a.name} ${a.description} ${a.file} `.toLowerCase();
+  const fbx = new FBXLoader();
+  let got = 0;
+  for (const [move, [want, avoid]] of Object.entries(MOCAP)) {
+    // Best match: the earliest wanted words, no ruled-out words, then the shortest name.
+    let best = null, bestScore = Infinity;
+    for (const a of list) {
+      const t = text(a);
+      if (avoid.some((w) => t.includes(w))) continue;
+      const i = want.findIndex((w) => t.includes(w));
+      if (i < 0) continue;
+      const score = i * 1000 + a.name.length;
+      if (score < bestScore) { bestScore = score; best = a; }
+    }
+    if (!best) continue;
+    try {
+      const obj = await fbx.loadAsync(best.url);
+      const anim = obj.animations && obj.animations[0];
+      if (!anim) continue;
+      obj.updateMatrixWorld(true);
+      const src = { root: obj, frame: bodyFrame(obj) };
+      for (const kind of ['him', 'her']) {
+        const c = borrow(anim, src, kind === 'him' ? 'soldier' : 'michelle');
+        c.name = `${move}:${best.name}`;
+        CLIPS[kind][move] = c;
+        for (const av of [me, ...[...others.values()].map((o) => o.av)]) {
+          if (av.kind !== kind) continue;
+          av.setClip(move, c);
+          (av.mocap || (av.mocap = new Set())).add(move);
+        }
+      }
+      MOCAP_LOADED.set(move, best.name);
+      got++;
+    } catch (e) { console.warn('Could not use', best.file, e.message); }
+  }
+  if (got) toast(`🎞️ ${got} real motion-captured moves loaded`);
+}
+function toast(t) {
+  const el = document.createElement('div'); el.className = 'hud-pill game-toast'; el.textContent = t;
+  document.body.appendChild(el); setTimeout(() => el.remove(), 4000);
+}
+
 updateEnv(true);
 setupEffects();
+loadMocap();
 $('loading').classList.add('hidden');
 renderer.setAnimationLoop(tick);
-window.__game = { doAct, CLIPS, BASE, SKEL, soldier, michelle, SkeletonUtils, shotOff: () => { shot = null; shotMix = 0; }, forceShot: () => { shotMix = 1; }, setHeading: (h) => { heading = h; }, me, others, scene, camera, renderer, labels, tick, setCam: (yaw, pitch, dist) => { camYaw = yaw; camPitch = pitch; camDist = dist; camTarget.copy(me.root.position).y += 1.5; }, setTime: (t) => { dayT = t; updateEnv(true); }, step: (n = 1) => { for (let i = 0; i < n; i++) tick(); } };
+window.__game = { doAct, MOCAP_LOADED, loadMocap, borrow, bodyFrame, FRAME, CLIPS, BASE, SKEL, soldier, michelle, SkeletonUtils, shotOff: () => { shot = null; shotMix = 0; }, forceShot: () => { shotMix = 1; }, setHeading: (h) => { heading = h; }, me, others, scene, camera, renderer, labels, tick, setCam: (yaw, pitch, dist) => { camYaw = yaw; camPitch = pitch; camDist = dist; camTarget.copy(me.root.position).y += 1.5; }, setTime: (t) => { dayT = t; updateEnv(true); }, step: (n = 1) => { for (let i = 0; i < n; i++) tick(); } };
