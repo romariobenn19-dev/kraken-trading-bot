@@ -6,10 +6,11 @@
  *   2. Press F12, click the "Console" tab.
  *   3. Paste this whole script and press Enter. (If Chrome says "allow pasting", type
  *      allow pasting and press Enter, then paste again.)
- *   4. Click the "Choose folder" button that appears, then pick (or create) the folder
- *      Movie Night\game-assets\mixamo  and allow Chrome to save files there.
+ *   4. The files go to your Downloads folder (like Mixamo's own Download button). When Chrome
+ *      asks "Download multiple files?", click Allow. Afterwards, move them (and manifest.json)
+ *      into  Movie Night\game-assets\mixamo.
  *   5. Leave the tab open. Progress shows in the console. You can stop (close the tab)
- *      and run it again later: files that are already there are skipped.
+ *      and run it again later: animations already downloaded are skipped.
  *
  * What it does: searches Mixamo for every kind of action in the list below, and saves
  * each animation as FBX (no skin, 30 fps, no keyframe reduction; walking/running "in place").
@@ -54,7 +55,7 @@
   async function api(path, opts = {}) {
     for (let attempt = 0; attempt < 6; attempt++) {
       const r = await fetch(`https://www.mixamo.com/api/v1/${path}`, { headers: H, ...opts });
-      if (r.status === 429 || r.status >= 500) { await sleep(2000 * (attempt + 1)); continue; }
+      if (r.status === 429 || r.status >= 500) { await sleep(5000 * (attempt + 1)); continue; } // too fast / busy: wait and retry
       if (!r.ok) throw new Error(`${r.status} on ${path}`);
       return r.json();
     }
@@ -64,20 +65,23 @@
   const characterId = primary.primary_character_id;
   if (!characterId) { console.error('Could not find your Mixamo character. Click any character in Mixamo first.'); return; }
 
-  // ---- Where to save ---------------------------------------------------------------------------
-  const dir = await new Promise((resolve) => {
-    const b = document.createElement('button');
-    b.textContent = '📁 Choose folder (Movie Night\\game-assets\\mixamo)';
-    Object.assign(b.style, { position: 'fixed', top: '20px', left: '50%', transform: 'translateX(-50%)', zIndex: 99999,
-      padding: '16px 26px', fontSize: '18px', fontWeight: 700, background: '#b2606b', color: '#fff', border: 0, borderRadius: '999px', cursor: 'pointer' });
-    b.onclick = async () => { try { const d = await window.showDirectoryPicker({ mode: 'readwrite' }); b.remove(); resolve(d); } catch { /* cancelled */ } };
-    document.body.appendChild(b);
-    console.log('👉 Click the pink "Choose folder" button at the top of the page.');
-  });
-  const sub = {};
-  const folder = async (name) => sub[name] || (sub[name] = await dir.getDirectoryHandle(name, { create: true }));
-  const exists = async (d, name) => { try { await d.getFileHandle(name); return true; } catch { return false; } };
-  const clean = (s) => String(s).replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 70);
+  // ---- Remember what's done (so a re-run skips it) ----------------------------------------------
+  const DONE_KEY = 'mn_mixamo_done';
+  const doneIds = new Set(JSON.parse(localStorage.getItem(DONE_KEY) || '[]'));
+  const markDone = (id) => { doneIds.add(id); localStorage.setItem(DONE_KEY, JSON.stringify([...doneIds])); };
+  // The page only allows downloads by following a link (not by fetching), like its own button.
+  function saveLink(url, name) {
+    const a = document.createElement('a');
+    a.href = url; if (name) a.download = name; a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+  const MANIFEST_KEY = 'mn_mixamo_manifest';
+  const manifest = JSON.parse(localStorage.getItem(MANIFEST_KEY) || '[]');
+  const saveManifestFile = () => {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(manifest, null, 1)], { type: 'application/json' }));
+    saveLink(url, 'manifest.json');
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  };
 
   // ---- Find everything -------------------------------------------------------------------------
   const wanted = new Map(); // id -> { id, name, description, cat, inplace }
@@ -99,14 +103,10 @@
   console.log(`📋 ${wanted.size} animations to fetch. This takes a while; keep this tab open.`);
 
   // ---- Download ------------------------------------------------------------------------------------
-  const manifest = [];
   let done = 0, skipped = 0, failed = 0, n = 0;
   for (const a of wanted.values()) {
     n++;
-    const d = await folder(a.cat);
-    const file = `${clean(a.name)} - ${clean(a.description).slice(0, 40)} [${a.id.slice(0, 8)}].fbx`;
-    manifest.push({ ...a, file: `${a.cat}/${file}` });
-    if (await exists(d, file)) { skipped++; continue; }
+    if (doneIds.has(a.id)) { skipped++; continue; }
     try {
       const info = await api(`products/${a.id}?similar=0&character_id=${characterId}`);
       const g = info.details.gms_hash;
@@ -115,27 +115,26 @@
       await api('animations/export', { method: 'POST', body: JSON.stringify({ character_id: characterId, gms_hash: [gms], preferences: SETTINGS, product_name: a.name, type: 'Motion' }) });
       let url = null;
       for (let i = 0; i < 90 && !url; i++) {
-        await sleep(1500);
+        await sleep(2000);
         const m = await api(`characters/${characterId}/monitor`);
         if (m.status === 'completed') url = m.job_result;
         else if (m.status === 'failed') throw new Error('Mixamo could not export it');
       }
       if (!url) throw new Error('timed out');
-      const blob = await (await fetch(url)).blob();
-      const w = await (await d.getFileHandle(file, { create: true })).createWritable();
-      await w.write(blob); await w.close();
+      saveLink(url);
+      const file = decodeURIComponent(new URL(url).pathname.split('/').pop());
+      manifest.push({ ...a, file, order: manifest.length + 1 });
+      localStorage.setItem(MANIFEST_KEY, JSON.stringify(manifest));
+      markDone(a.id);
       done++;
       console.log(`✅ ${n}/${wanted.size} ${a.cat}/${a.name} (${a.description})`);
     } catch (e) {
       failed++;
       console.warn(`⚠️ ${n}/${wanted.size} ${a.name}: ${e.message}`);
     }
-    if (n % 25 === 0) {
-      const w = await (await dir.getFileHandle('manifest.json', { create: true })).createWritable();
-      await w.write(JSON.stringify(manifest, null, 1)); await w.close();
-    }
+    await sleep(2500); // gentle on Mixamo (it refuses if asked too fast)
+    if (done && done % 100 === 0) saveManifestFile();
   }
-  const w = await (await dir.getFileHandle('manifest.json', { create: true })).createWritable();
-  await w.write(JSON.stringify([...wanted.values()].map((a) => manifest.find((m) => m.id === a.id)), null, 1)); await w.close();
-  console.log(`🎉 Finished: ${done} downloaded, ${skipped} already there, ${failed} failed. (Run again to retry the failed ones.)`);
+  saveManifestFile();
+  console.log(`🎉 Finished: ${done} downloaded, ${skipped} already done, ${failed} failed. (Run again to retry the failed ones.) Now move the files and manifest.json into Movie Night\\game-assets\\mixamo.`);
 })();
