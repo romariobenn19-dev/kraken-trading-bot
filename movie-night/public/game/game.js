@@ -100,7 +100,25 @@ const NoirShader = {
       gl_FragColor = vec4(clamp(g, 0.0, 1.0), 1.0);
     }`,
 };
-let noirPass = null;
+let noirPass = null, aoPass = null;
+// Keep it smooth: when the frame rate drops, draw at a lower resolution (then switch off the
+// ambient-occlusion effect, the most expensive one); when there's room again, go back up.
+let curPR = Q.pr, perfT = 0, perfFrames = 0;
+function adaptQuality(dt) {
+  perfT += dt; perfFrames++;
+  if (perfT < 2) return;
+  const fps = perfFrames / perfT; perfT = 0; perfFrames = 0;
+  let pr = curPR;
+  if (fps < 48) {
+    if (pr > Q.pr * 0.6 + 0.01) pr = Math.max(Q.pr * 0.6, pr - 0.1);
+    else if (aoPass && aoPass.enabled) aoPass.enabled = false;
+  } else if (fps > 58 && pr < Q.pr) pr = Math.min(Q.pr, pr + 0.05);
+  if (pr !== curPR) {
+    curPR = pr;
+    renderer.setPixelRatio(pr); renderer.setSize(innerWidth, innerHeight);
+    if (composer) { composer.setPixelRatio(pr); composer.setSize(innerWidth, innerHeight); }
+  }
+}
 function setupEffects() {
   if (LONDON) {
     composer = new EffectComposer(renderer);
@@ -110,6 +128,7 @@ function setupEffects() {
       ao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.4, thickness: 1.2, scale: 1.1, samples: 12 });
       ao.blendIntensity = 0.85;
       composer.addPass(ao);
+      aoPass = ao;
     }
     if (Q.bloom) composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.55, 0.6, 0.78)); // lamps glow in the mist
     composer.addPass(new OutputPass());
@@ -1147,6 +1166,7 @@ function tick() {
     if (key !== lastSent || performance.now() - lastSentAt > 3000) { lastSent = key; lastSentAt = performance.now(); send(msg); }
   }
   if (composer) composer.render(dt); else renderer.render(scene, camera);
+  adaptQuality(dt);
   labels.render(scene, camera);
   frames++; fpsT += dt;
   if (fpsT > 1) { $('fps').textContent = `${Math.round(frames / fpsT)} fps · ${qName}`; frames = 0; fpsT = 0; }
