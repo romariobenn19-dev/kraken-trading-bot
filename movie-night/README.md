@@ -94,6 +94,7 @@ The first step toward your own game: tap **🎮 Our world** at the top of Movie 
 - **Graphics** (top right): High, Medium or Low. The laptop starts on High, the tablet on Low; the fps number shows how smoothly it runs.
 - **Your own characters:** put Mixamo characters (downloaded "With Skin", "T-pose", FBX) in `game-assets\Characters` named `him.fbx` and `her.fbx` (or .glb). All the moves are fitted to them automatically.
 - **Real moves:** put your Mixamo animations and their `manifest.json` in `game-assets\Mixamo`. If a walk, run or idle animation comes out wrong (arms stuck out, "zombie" walk), the game skips it and uses the built-in one instead, and tells you which file it skipped.
+- **Real materials:** the brick, flagstones, road, stone, stucco and slate are photographed surfaces from Poly Haven (free, CC0), plus a photographed rainy street at night for the reflections. The laptop downloads them (about 20 MB) the first time you open Our World after updating.
 - The 3D models and textures (about 12 MB) are fetched by the laptop the first time and kept there; they aren't stored in GitHub. The characters come from the three.js examples (Mixamo models), for your own use.
 
 ## Install it as an app

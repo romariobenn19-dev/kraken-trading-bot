@@ -112,6 +112,40 @@ function phoneBoxTexture() {
   });
 }
 
+// ---- Photographed materials (Poly Haven, CC0) ------------------------------------------------
+// Every textured surface here has 1 texture unit = 3 m (see box()). Each material keeps its
+// code-made look until the real images arrive, then switches over, so a failed download never
+// leaves anything black.
+const UV_M = 3;
+const phLoader = new THREE.TextureLoader();
+const phCache = new Map();
+function phTex(id, kind, sizeM) {
+  const key = `${id}_${kind}`;
+  if (!phCache.has(key)) {
+    phCache.set(key, new Promise((ok, fail) => phLoader.load(`/game-assets/ph_${id}_${kind}.jpg`, (t) => {
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.repeat.set(UV_M / sizeM, UV_M / sizeM);
+      t.anisotropy = 8;
+      if (kind === 'diff') t.colorSpace = THREE.SRGBColorSpace;
+      ok(t);
+    }, undefined, fail)));
+  }
+  return phCache.get(key);
+}
+/** Give `mat` a real photographed surface: id = Poly Haven texture, sizeM = metres one image covers. */
+export function photo(mat, id, sizeM, { normal = 1, rough = 1, ao = 1 } = {}) {
+  Promise.all(['diff', 'nor_gl', 'arm'].map((k) => phTex(id, k, sizeM))).then(([diff, nor, arm]) => {
+    mat.map = diff;
+    mat.normalMap = nor; mat.normalScale.set(normal, normal);
+    mat.roughnessMap = arm; mat.roughness = rough;   // (green channel)
+    mat.aoMap = arm; mat.aoMapIntensity = ao;         // (red channel): mortar lines and cracks stay dark
+    mat.metalnessMap = null; mat.metalness = 0;
+    mat.bumpMap = null;
+    mat.needsUpdate = true;
+  }).catch(() => { /* keep the code-made look */ });
+  return mat;
+}
+
 // ---- Geometry helpers -------------------------------------------------------------------------
 /** A box whose texture coordinates are in metres / tile (so brick looks the same size everywhere). */
 function box(w, h, d, x, y, z, tile = 3) {
@@ -131,10 +165,15 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
   // ---- Materials --------------------------------------------------------------------------------
   const brickMaps = { map: tex('brick_diffuse.jpg', 1, true), bumpMap: tex('brick_bump.jpg'), roughnessMap: tex('brick_roughness.jpg') };
   const bricks = [0x8f5a48, 0xb59a74, 0x6f4a3e, 0x9c7f6a].map((c) => new THREE.MeshStandardMaterial({ ...brickMaps, color: c, bumpScale: 1.5, roughness: 0.9 }));
-  const stucco = new THREE.MeshStandardMaterial({ color: 0xd8d2c4, roughness: 0.75 });
-  const stone = new THREE.MeshStandardMaterial({ color: 0x8d8a83, roughness: 0.85 });
+  // London stock brick (yellow-grey), red brick and old mixed brick; wet, so a little shinier.
+  photo(bricks[0], 'red_brick_03', 1.0, { rough: 0.8 }); bricks[0].color.set(0xc8b8b0);
+  photo(bricks[1], 'yellow_brick', 2.0, { rough: 0.8 }); bricks[1].color.set(0xffffff);
+  photo(bricks[2], 'brick_wall_02', 2.0, { rough: 0.8 }); bricks[2].color.set(0xb8aca4);
+  photo(bricks[3], 'yellow_brick', 2.0, { rough: 0.8 }); bricks[3].color.set(0xd8d0c8);
+  const stucco = photo(new THREE.MeshStandardMaterial({ color: 0xd8d2c4, roughness: 0.75 }), 'white_stucco', 2.0, { rough: 0.7 });
+  const stone = photo(new THREE.MeshStandardMaterial({ color: 0x8d8a83, roughness: 0.85 }), 'granite_tile', 2.3, { rough: 0.6 });
   const iron = new THREE.MeshStandardMaterial({ color: 0x15171a, roughness: 0.35, metalness: 0.6 });
-  const slate = new THREE.MeshStandardMaterial({ color: 0x2c2f35, roughness: 0.6 });
+  const slate = photo(new THREE.MeshStandardMaterial({ color: 0x2c2f35, roughness: 0.6 }), 'roof_slates_03', 3.0, { rough: 0.5 });
   const pot = new THREE.MeshStandardMaterial({ color: 0x8a4a32, roughness: 0.9 });
   const frameMat = new THREE.MeshStandardMaterial({ color: 0xe9e6dc, roughness: 0.6 });
   const glassDark = new THREE.MeshStandardMaterial({ color: 0x0d1117, roughness: 0.05, metalness: 0.8 });
@@ -143,20 +182,32 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
 
   // ---- Ground: road, pavements, kerbs ------------------------------------------------------------
   const asphalt = asphaltTextures();
-  asphalt.map.repeat.set((X_ROAD_END - X_WEST) / 40, 1); asphalt.rough.repeat.copy(asphalt.map.repeat);
+  asphalt.map.repeat.set(UV_M / 40, UV_M / 10); asphalt.rough.repeat.copy(asphalt.map.repeat);
   const road = new THREE.Mesh(new THREE.PlaneGeometry(X_ROAD_END - X_WEST, KERB_F - KERB_N), new THREE.MeshStandardMaterial({
     map: asphalt.map, roughnessMap: asphalt.rough, roughness: 0.85, metalness: 0.05, color: 0xb0b0b0,
   }));
+  // Real worn asphalt, kept wet (low roughness) so the lamps reflect in it.
+  { const uv = road.geometry.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * (X_ROAD_END - X_WEST) / UV_M, uv.getY(i) * (KERB_F - KERB_N) / UV_M); }
+  photo(road.material, 'asphalt_02', 3.0, { rough: 0.42, normal: 0.8 }); road.material.color.set(0x9a9a9a);
   road.rotation.x = -Math.PI / 2;
   road.position.set((X_WEST + X_ROAD_END) / 2, 0, (KERB_N + KERB_F) / 2);
   road.receiveShadow = true;
   scene.add(road);
+  // Painted lines: double yellows along both kerbs, a dashed white line down the middle.
+  {
+    const yellow = new THREE.MeshStandardMaterial({ color: 0xc9a227, roughness: 0.5 });
+    const white = new THREE.MeshStandardMaterial({ color: 0xd8d8d0, roughness: 0.5 });
+    const line = (mat, x0, x1, z, w) => { const g = new THREE.PlaneGeometry(x1 - x0, w); g.rotateX(-Math.PI / 2); g.translate((x0 + x1) / 2, 0.006, z); add(mat, g); };
+    for (const [z, d] of [[KERB_N, 1], [KERB_F, -1]]) { line(yellow, X_WEST, X_ROAD_END - 0.3, z + d * 0.35, 0.1); line(yellow, X_WEST, X_ROAD_END - 0.3, z + d * 0.55, 0.1); }
+    for (let x = X_WEST + 1; x < X_ROAD_END - 4; x += 9) line(white, x, x + 4, (KERB_N + KERB_F) / 2, 0.12);
+  }
   const paving = pavingTextures();
   const pavingMat = new THREE.MeshStandardMaterial({ map: paving.map, roughnessMap: paving.rough, roughness: 0.9, color: 0xc8c8c8 });
+  photo(pavingMat, 'precast_stone_paving', 2.24, { rough: 0.55 }); // London flagstones, wet
   const pave = (x0, x1, z0, z1) => {
     const g = new THREE.BoxGeometry(x1 - x0, PAVE, z1 - z0);
     const uv = g.attributes.uv;
-    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * (x1 - x0) / 4, uv.getY(i) * (z1 - z0) / 4);
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * (x1 - x0) / UV_M, uv.getY(i) * (z1 - z0) / UV_M);
     g.translate((x0 + x1) / 2, PAVE / 2, (z0 + z1) / 2);
     add(pavingMat, g);
   };
@@ -184,7 +235,7 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
     const floors = opts.floors || (3 + (r() < 0.45 ? 1 : 0));
     const fh = 3.2, height = opts.height || (floors * fh + 0.6);
     const depth = 20, zBack = zFront - dir * depth;
-    const brickMat = bricks[Math.floor(r() * bricks.length)];
+    const brickMat = opts.mat || bricks[Math.floor(r() * bricks.length)];
     const y0 = opts.y0 || 0;
     // Body (front face is brick; stucco ground floor on some houses)
     add(brickMat, box(w, height - y0, depth, cx, y0 + (height - y0) / 2, (zFront + zBack) / 2));
@@ -229,7 +280,7 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
   row(NEAR_FRONT, 1, HOUSE_GAP);
   row(FAR_FRONT, -1, null);
   // Your house becomes a terraced house: upper floors on top, and a block behind it.
-  building(H.HX - H.W / 2, H.HX + H.W / 2, NEAR_FRONT, 1, { y0: H.TOP, floors: 4, height: 4 * 3.2 + 0.6 });
+  building(H.HX - H.W / 2, H.HX + H.W / 2, NEAR_FRONT, 1, { y0: H.TOP, floors: 4, height: 4 * 3.2 + 0.6, mat: bricks[0] });
   colliders.pop(); // (your own house's ground floor has its own walls and door)
   add(bricks[0], box(H.W + 0.6, 13, 12, H.HX, 6.5, H.HZ - H.D / 2 - 6.3));
   colliders.push([HOUSE_GAP[0], H.HZ - H.D / 2 - 12.3, HOUSE_GAP[1], H.HZ - H.D / 2 - 0.3]);

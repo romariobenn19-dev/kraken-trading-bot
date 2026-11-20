@@ -15,8 +15,9 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { plantTrees } from './trees.js';
-import { buildLondon } from './london.js';
+import { buildLondon, photo } from './london.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 // The setting: a rainy winter night in London (true), or the green valley (false).
 const LONDON = true;
 import { pose, stopPose, applyPoses, sound, cinematic, POSES } from './actions.js';
@@ -91,7 +92,7 @@ const NoirShader = {
       float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));
       float s = (mx - mn) / (mx + 1e-4);
       float lamp = clamp((c.r - c.b) * 2.0, 0.0, 1.0) * smoothstep(0.78, 1.0, mx);  // only the brightest warm light (lamps, windows)
-      float red = smoothstep(0.55, 0.8, s) * step(c.g * 1.7, c.r) * step(0.12, mx); // the phone box, the post box, lipstick
+      float red = smoothstep(0.7, 0.9, s) * step(c.g * 2.4, c.r) * step(0.12, mx); // the phone box, the post box, lipstick
       vec3 g = mix(vec3(l), c, clamp(sat + max(lamp * 0.7, red * 0.9), 0.0, 1.0));
       g *= mix(vec3(0.86, 0.92, 1.06), vec3(1.0), smoothstep(0.0, 0.55, l)); // cool shadows
       g = (g - 0.5) * contrast + 0.5;
@@ -288,12 +289,13 @@ const envScene = new THREE.Scene();
 const envSky = new Sky();
 envSky.scale.setScalar(1000);
 envScene.add(envSky);
-let envRT = null;
+let envRT = null, nightEnv = null;
 
 // ---- The house ------------------------------------------------------------------------------------
 const colliders = []; // axis-aligned boxes: [minX, minZ, maxX, maxZ]
 const circles = [];   // trees & rocks: [x, z, r]
 const brick = new THREE.MeshStandardMaterial({ map: tex('brick_diffuse.jpg', 1, true), bumpMap: tex('brick_bump.jpg'), bumpScale: 2, roughnessMap: tex('brick_roughness.jpg'), roughness: 1, color: 0xf2e2d6 });
+if (LONDON) { photo(brick, 'red_brick_03', 1.0, { rough: 0.8 }); brick.color.set(0xc8b8b0); } // same London brick as the floors above
 const wood = new THREE.MeshStandardMaterial({ map: tex('wood_diffuse.jpg', 1, true), bumpMap: tex('wood_bump.jpg'), bumpScale: 1, roughnessMap: tex('wood_roughness.jpg'), roughness: 1 });
 const roofMat = new THREE.MeshStandardMaterial({ color: 0x4a3a36, roughness: 0.85, roughnessMap: tex('disturb.jpg', 3) });
 const trimMat = new THREE.MeshStandardMaterial({ color: 0xf6eedf, roughness: 0.6 });
@@ -993,8 +995,19 @@ function updateEnv(force) {
     if (london) london.update(0, me ? me.root.position : new THREE.Vector3(), camera.position, day); // sky colours first
     envRT = pmrem.fromScene(london ? london.envScene : envScene);
     scene.environment = envRT.texture;
+    // At night in London: reflections from a photographed rainy street at night.
+    if (london && nightEnv && day < 0.4) scene.environment = nightEnv;
     scene.environmentIntensity = london ? 0.35 + 0.3 * day : 0.15 + 0.4 * day;
   }
+}
+
+if (london && Q.env) {
+  new RGBELoader().load('/game-assets/ph_night.hdr', (t) => {
+    t.mapping = THREE.EquirectangularReflectionMapping;
+    nightEnv = pmrem.fromEquirectangular(t).texture;
+    t.dispose();
+    updateEnv(true);
+  }, undefined, () => { /* keep the built-in reflections */ });
 }
 
 // ---- Together (the other player) ----------------------------------------------------------------

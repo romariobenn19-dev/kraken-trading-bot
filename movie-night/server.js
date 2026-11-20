@@ -123,7 +123,14 @@ const GAME_ASSETS = {
   'wood_roughness.jpg': `${THREE_EXAMPLES}/textures/hardwood2_roughness.jpg`,
   'waternormals.jpg': `${THREE_EXAMPLES}/textures/waternormals.jpg`,
   'disturb.jpg': `${THREE_EXAMPLES}/textures/disturb.jpg`,
+  // A real rainy street at night (Poly Haven, CC0): the reflections on the wet street.
+  'ph_night.hdr': 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/cobblestone_street_night_1k.hdr',
 };
+// Photographed materials for London (Poly Haven, CC0): colour, surface detail (normal) and
+// ambient-occlusion / roughness / metal packed in one image, 1k each.
+for (const id of ['yellow_brick', 'red_brick_03', 'brick_wall_02', 'precast_stone_paving', 'asphalt_02', 'granite_tile', 'roof_slates_03', 'white_stucco']) {
+  for (const k of ['diff', 'nor_gl', 'arm']) GAME_ASSETS[`ph_${id}_${k}.jpg`] = `https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/${id}/${id}_${k}_1k.jpg`;
+}
 /** game-assets/Mixamo (any upper/lower case): the animations you downloaded from Mixamo. */
 function mixamoDir() {
   try {
