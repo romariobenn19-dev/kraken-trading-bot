@@ -185,13 +185,96 @@ export function curtainTexture() {
   }, { repeat: [1, 1] });
 }
 
+// ---- Light texture layout -----------------------------------------------------------------------
+// Every face of the street gets its own patch of one 2048 x 2048 texture (a second set of texture
+// coordinates, uv1), sized by how much it's seen: house fronts and the ground get the most detail,
+// party walls, backs and roofs much less. Things outside the street share one small corner patch.
+const LM = 2048, LM_PAD = 3, LM_CORNER = 8;
+function lightmapUVs(geos) {
+  const inStreet = (x, z) => x > X_WEST - 14 && x < X_RIVER + 3 && z > -32 && z < FAR_FRONT + 26;
+  const zMid = (KERB_N + KERB_F) / 2;
+  const charts = [], corner = [];
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3(), e1 = new THREE.Vector3(), e2 = new THREE.Vector3();
+  const UVAX = [[2, 1], [0, 2], [0, 1]]; // which world axes a face along x / y / z is laid out with
+  geos.forEach((g, gi) => {
+    const pos = g.attributes.position;
+    const uv1 = new Float32Array(pos.count * 2);
+    g.setAttribute('uv1', new THREE.BufferAttribute(uv1, 2));
+    const byKey = new Map();
+    for (let t = 0; t < pos.count / 3; t++) {
+      a.fromBufferAttribute(pos, t * 3); b.fromBufferAttribute(pos, t * 3 + 1); c.fromBufferAttribute(pos, t * 3 + 2);
+      n.crossVectors(e1.subVectors(b, a), e2.subVectors(c, a));
+      const cx = (a.x + b.x + c.x) / 3, cy = (a.y + b.y + c.y) / 3, cz = (a.z + b.z + c.z) / 3;
+      if (!inStreet(cx, cz)) { corner.push([g, t]); continue; }
+      const ax = Math.abs(n.x) >= Math.abs(n.y) && Math.abs(n.x) >= Math.abs(n.z) ? 0 : Math.abs(n.y) >= Math.abs(n.z) ? 1 : 2;
+      const sign = n.getComponent(ax) >= 0 ? 1 : -1;
+      const [ua, va] = UVAX[ax];
+      const cu = [cx, cy, cz][ua], cv = [cx, cy, cz][va];
+      const key = `${ax}${sign}|${Math.floor(cu / 24)}|${Math.floor(cv / 24)}`;
+      let ch = byKey.get(key);
+      if (!ch) {
+        // How much detail: fronts facing the street and the ground get the most.
+        let f;
+        if (ax === 1) f = sign > 0 ? (cy < 0.6 ? 1 : 0.3) : 0.12;
+        else if (ax === 2) f = sign * (zMid - cz) > 0 || cz < -5 ? 1 : 0.25;
+        else f = 0.3;
+        ch = { g, gi, ua, va, tris: [], u0: Infinity, v0: Infinity, u1: -Infinity, v1: -Infinity, f };
+        byKey.set(key, ch); charts.push(ch);
+      }
+      ch.tris.push(t);
+      for (const p of [a, b, c]) {
+        const u = p.getComponent(ua), v = p.getComponent(va);
+        ch.u0 = Math.min(ch.u0, u); ch.u1 = Math.max(ch.u1, u); ch.v0 = Math.min(ch.v0, v); ch.v1 = Math.max(ch.v1, v);
+      }
+    }
+  });
+  // Shelf packing, shrinking the detail until everything fits.
+  let area = 0; for (const ch of charts) area += (ch.u1 - ch.u0) * (ch.v1 - ch.v0) * ch.f * ch.f;
+  let d = Math.sqrt((0.72 * LM * LM) / Math.max(1, area)), placed = null;
+  const order = charts.map((ch, i) => i);
+  for (let tries = 0; tries < 40 && !placed; tries++) {
+    const size = charts.map((ch) => [Math.max(1, Math.ceil((ch.u1 - ch.u0) * d * ch.f)) + LM_PAD * 2, Math.max(1, Math.ceil((ch.v1 - ch.v0) * d * ch.f)) + LM_PAD * 2]);
+    order.sort((i, j) => size[j][1] - size[i][1] || i - j);
+    let x = LM_CORNER, y = 0, rowH = LM_CORNER, ok = true;
+    const at = new Array(charts.length);
+    for (const i of order) {
+      const [w, h] = size[i];
+      if (x + w > LM) { x = 0; y += rowH; rowH = 0; }
+      if (y + h > LM || w > LM) { ok = false; break; }
+      at[i] = [x, y]; x += w; rowH = Math.max(rowH, h);
+    }
+    if (ok) placed = at; else d *= 0.94;
+  }
+  const p = new THREE.Vector3();
+  charts.forEach((ch, i) => {
+    const [x, y] = placed[i];
+    const pos = ch.g.attributes.position, uv1 = ch.g.attributes.uv1.array, s = d * ch.f;
+    for (const t of ch.tris) for (let k = 0; k < 3; k++) {
+      p.fromBufferAttribute(pos, t * 3 + k);
+      uv1[(t * 3 + k) * 2] = (x + LM_PAD + (p.getComponent(ch.ua) - ch.u0) * s) / LM;
+      uv1[(t * 3 + k) * 2 + 1] = (y + LM_PAD + (p.getComponent(ch.va) - ch.v0) * s) / LM;
+    }
+  });
+  for (const [g, t] of corner) { const uv1 = g.attributes.uv1.array; for (let k = 0; k < 3; k++) { uv1[(t * 3 + k) * 2] = (LM_CORNER / 2) / LM; uv1[(t * 3 + k) * 2 + 1] = (LM_CORNER / 2) / LM; } }
+  // A fingerprint of the layout: the light textures only fit this exact street.
+  let h = 2166136261 >>> 0;
+  const mix = (v) => { h = Math.imul(h ^ (Math.round(v * 100) | 0), 16777619) >>> 0; };
+  mix(charts.length); mix(d);
+  for (const g of geos) { const arr = g.attributes.position.array; mix(arr.length); for (let i = 0; i < arr.length; i += 97) mix(arr[i]); }
+  return { hash: h.toString(16), density: d };
+}
+
 // ---- Geometry helpers -------------------------------------------------------------------------
 /** A box whose texture coordinates are in metres / tile (so brick looks the same size everywhere). */
 function box(w, h, d, x, y, z, tile = 3) {
-  const g = new THREE.BoxGeometry(w, h, d);
+  const seg = (v) => Math.max(1, Math.ceil(v / 10)); // long faces in 10 m pieces (for the light textures)
+  const g = new THREE.BoxGeometry(w, h, d, seg(w), seg(h), seg(d));
   const uv = g.attributes.uv;
   const dims = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]]; // +x -x +y -y +z -z
-  for (let f = 0; f < 6; f++) for (let k = 0; k < 4; k++) { const i = f * 4 + k; uv.setXY(i, uv.getX(i) * dims[f][0] / tile, uv.getY(i) * dims[f][1] / tile); }
+  g.groups.forEach((gr, f) => {
+    const vs = new Set(); for (let k = gr.start; k < gr.start + gr.count; k++) vs.add(g.index.getX(k));
+    for (const i of vs) uv.setXY(i, uv.getX(i) * dims[f][0] / tile, uv.getY(i) * dims[f][1] / tile);
+  });
   g.translate(x, y, z);
   return g;
 }
@@ -226,16 +309,16 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
   // ---- Ground: road, pavements, kerbs ------------------------------------------------------------
   const asphalt = asphaltTextures();
   asphalt.map.repeat.set(UV_M / 40, UV_M / 10); asphalt.rough.repeat.copy(asphalt.map.repeat);
-  const road = new THREE.Mesh(new THREE.PlaneGeometry(X_ROAD_END - X_WEST, KERB_F - KERB_N), new THREE.MeshStandardMaterial({
+  const road = new THREE.Mesh(new THREE.PlaneGeometry(X_ROAD_END - X_WEST, KERB_F - KERB_N, Math.ceil((X_ROAD_END - X_WEST) / 10), 1), new THREE.MeshStandardMaterial({
     map: asphalt.map, roughnessMap: asphalt.rough, roughness: 0.85, metalness: 0.05, color: 0xb0b0b0,
   }));
   // Real worn asphalt, kept wet (low roughness) so the lamps reflect in it.
   { const uv = road.geometry.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * (X_ROAD_END - X_WEST) / UV_M, uv.getY(i) * (KERB_F - KERB_N) / UV_M); }
   photo(road.material, 'asphalt_02', 3.0, { rough: 0.42, normal: 0.8 }); road.material.color.set(0x9a9a9a);
-  road.rotation.x = -Math.PI / 2;
-  road.position.set((X_WEST + X_ROAD_END) / 2, 0, (KERB_N + KERB_F) / 2);
-  road.receiveShadow = true;
-  scene.add(road);
+  road.geometry.rotateX(-Math.PI / 2);
+  road.geometry.translate((X_WEST + X_ROAD_END) / 2, 0, (KERB_N + KERB_F) / 2);
+  const roadMat = road.material;
+  add(roadMat, road.geometry);
   // Painted lines: double yellows along both kerbs, a dashed white line down the middle.
   {
     const yellow = new THREE.MeshStandardMaterial({ color: 0xc9a227, roughness: 0.5 });
@@ -248,7 +331,7 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
   const pavingMat = new THREE.MeshStandardMaterial({ map: paving.map, roughnessMap: paving.rough, roughness: 0.9, color: 0xc8c8c8 });
   photo(pavingMat, 'precast_stone_paving', 2.24, { rough: 0.55 }); // London flagstones, wet
   const pave = (x0, x1, z0, z1) => {
-    const g = new THREE.BoxGeometry(x1 - x0, PAVE, z1 - z0);
+    const g = new THREE.BoxGeometry(x1 - x0, PAVE, z1 - z0, Math.ceil((x1 - x0) / 10), 1, Math.ceil((z1 - z0) / 10));
     const uv = g.attributes.uv;
     for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * (x1 - x0) / UV_M, uv.getY(i) * (z1 - z0) / UV_M);
     g.translate((x0 + x1) / 2, PAVE / 2, (z0 + z1) / 2);
@@ -430,8 +513,10 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
     placeModel(scene, 'street_lamp_01', mats, { shadow: !lowQ, onMaterial: glow }).then(() => { for (const m of simpleLamp) if (m) m.visible = false; }).catch(() => {});
   }
   // Wall lanterns beside some front doors (and yours).
+  const lanterns = [];
   {
-    const wl = [[H.HX + 1.25, NEAR_FRONT + 0.14, 1]];
+    const wl = lanterns;
+    wl.push([H.HX + 1.25, NEAR_FRONT + 0.14, 1]);
     for (const [x, z, dir] of doors) if (r() < 0.4) wl.push([x + 0.95, z + dir * 0.2, dir]);
     const mats = wl.map(([x, z, dir]) => new THREE.Matrix4().compose(new THREE.Vector3(x, PAVE + 2.55, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), dir > 0 ? 0 : Math.PI), new THREE.Vector3(0.85, 0.85, 0.85)));
     placeModel(scene, 'street_lamp_02', mats, { onMaterial: glow }).catch(() => {});
@@ -535,12 +620,52 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
   inst(() => new THREE.PlaneGeometry(2.6, 3.6), farWin, farW, ([x, y, z], p, q) => { p.set(x, y, z); q.setFromEuler(new THREE.Euler(0, -Math.PI / 2, 0)); });
 
   // ---- Merge everything that shares a material ---------------------------------------------------
-  for (const [mat, list] of groups) {
-    const mesh = new THREE.Mesh(mergeGeometries(list.map((g) => (g.index ? g.toNonIndexed() : g))), mat);
-    mesh.castShadow = mat !== pavingMat;
+  const flat = [...groups.entries()].map(([mat, list]) => [mat, list.map((g) => (g.index ? g.toNonIndexed() : g))]);
+  const lm = lightmapUVs(flat.flatMap(([, l]) => l));
+  const statics = [];
+  for (const [mat, list] of flat) {
+    for (const g of list) { if (g.attributes.normal === undefined) g.computeVertexNormals(); for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv', 'uv1'].includes(k)) g.deleteAttribute(k); }
+    const mesh = new THREE.Mesh(mergeGeometries(list), mat);
+    mesh.castShadow = mat !== pavingMat && mat !== roadMat;
     mesh.receiveShadow = true;
     scene.add(mesh);
+    statics.push(mesh);
   }
+  // Light precalculated in Blender (tools/bake-london): how the grey sky lights the street by day,
+  // and how every lamp and lit window lights it at night, bounces included. Used when it matches
+  // this exact street (the hash); otherwise everything is lit live as before.
+  const lmMix = { value: 1 }, lmDayI = { value: 1 }, lmNightI = { value: 1 };
+  const LM_DAY = 4.4, LM_NIGHT = 4.5; // (Blender's light units to the game's; tuned by eye)
+  const baked = { on: false };
+  fetch('/game/baked/london.json').then((r) => (r.ok ? r.json() : null)).then(async (info) => {
+    if (!info || info.hash !== lm.hash) { if (info) console.warn('London light textures are out of date: lit live instead'); return; }
+    const load = (f) => new Promise((ok, no) => new THREE.TextureLoader().load(`/game/baked/${f}?v=${info.hash}`, (t) => {
+      t.colorSpace = THREE.SRGBColorSpace; t.channel = 1; t.generateMipmaps = false; t.minFilter = THREE.LinearFilter; ok(t);
+    }, undefined, no));
+    const [day, night] = await Promise.all([load(info.day), load(info.night)]);
+    // The textures are stored scaled to fit; scale back, then tune to the game's own light levels.
+    lmDayI.value = info.dayScale * LM_DAY; lmNightI.value = info.nightScale * LM_NIGHT;
+    const noHemi = THREE.ShaderChunk.lights_fragment_begin.replace('irradiance += getHemisphereLightIrradiance( hemisphereLights[ i ], geometryNormal );', '');
+    const maps = `#if defined( RE_IndirectDiffuse )
+        irradiance += mix(texture2D(lightMap, vLightMapUv).rgb * lmDayI, texture2D(lmNight, vLightMapUv).rgb * lmNightI, lmMix) * lightMapIntensity;
+      #endif
+      #if defined( USE_ENVMAP ) && defined( RE_IndirectSpecular )
+        radiance += getIBLRadiance( geometryViewDir, geometryNormal, material.roughness );
+      #endif`;
+    for (const m of statics) {
+      const mat = m.material;
+      mat.lightMap = day; mat.lightMapIntensity = 1;
+      mat.onBeforeCompile = (sh) => {
+        sh.uniforms.lmNight = { value: night }; sh.uniforms.lmMix = lmMix; sh.uniforms.lmDayI = lmDayI; sh.uniforms.lmNightI = lmNightI;
+        sh.fragmentShader = 'uniform sampler2D lmNight; uniform float lmMix, lmDayI, lmNightI;\n' + sh.fragmentShader
+          .replace('#include <lights_fragment_begin>', noHemi)
+          .replace('#include <lights_fragment_maps>', maps);
+      };
+      mat.customProgramCacheKey = () => 'baked';
+      mat.needsUpdate = true;
+    }
+    baked.on = true;
+  }).catch(() => { /* lit live */ });
 
   // ---- Sky: low winter cloud, city glow at night --------------------------------------------------
   const skyMat = new THREE.ShaderMaterial({
@@ -653,6 +778,7 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
     splashMat.uniforms.time.value = t;
     splashMat.uniforms.center.value.set(player.x, 0, player.z);
     haloMat.opacity = 0.08 + 0.42 * night;
+    lmMix.value = Math.min(1, Math.max(0, (night - 0.15) / 0.7));
     rainMat.uniforms.opacity.value = 0.32 + 0.25 * night;
     // Sky: overcast grey by day, near-black with an orange city glow at night.
     cTop.setRGB(0.36, 0.39, 0.43).lerp(new THREE.Color(0.012, 0.016, 0.028), night);
@@ -672,7 +798,7 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
       const near = lampVec.map((v) => [v, v.distanceToSquared(player)]).sort((a, b) => a[1] - b[1]).slice(0, lampLights.length);
       near.forEach(([v], i) => lampLights[i].position.copy(v));
     }
-    for (const l of lampLights) l.intensity = 17 * night;
+    for (const l of lampLights) l.intensity = (baked.on ? 6 : 17) * night; // (with light textures the lamps already light the street; these light you)
     clockT += dt;
     if (clockT > 20) { clockT = 0; clockTex.draw(); }
   }
@@ -686,7 +812,8 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
   }
   const lanes = [{ z: NEAR_FRONT + 2.35, x0: X_WEST + 4, x1: X_ROAD_END - 4 }, { z: FAR_FRONT - 2.35, x0: X_WEST + 4, x1: X_ROAD_END - 4 }];
   return {
-    lanes, see,
+    lanes, see, statics, baked, lmMix, lmDayI, lmNightI,
+    bakeInfo: { hash: lm.hash, density: lm.density, lamps: lamps.map(([x, z]) => [x, LAMP_Y, z]), lanterns: lanterns.map(([x, z, dir]) => [x, PAVE + 2.55 + 0.45, z + dir * 0.55]), lit: windows.lit },
     update, groundAt, skyDome, envScene, water, setMuted, muted,
     bounds: { x0: X_WEST + 0.6, x1: X_RIVER - 0.45, z0: H.HZ - H.D / 2 + 0.4, z1: FAR_FRONT - 0.4 },
     spawn: new THREE.Vector3(H.HX + 1.5, PAVE, NEAR_FRONT + 1.6),
