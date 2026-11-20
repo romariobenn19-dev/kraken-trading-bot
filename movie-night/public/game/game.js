@@ -66,6 +66,17 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 0.55;
 renderer.shadowMap.enabled = Q.shadows;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// Laptops with two graphics chips often run browsers on the weak built-in one (Intel) instead of
+// the gaming one (NVIDIA / AMD). Say so, with how to fix it.
+let gpuName = '';
+try {
+  const gl = renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
+  gpuName = String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
+} catch { /* unknown */ }
+const weakGpu = /intel/i.test(gpuName) && !/arc/i.test(gpuName) && !isTouch;
+if (weakGpu) {
+  setTimeout(() => toast('⚠️ The game is running on the laptop\'s built-in Intel graphics, not the NVIDIA card, so it will be slow. Fix: Windows Settings → System → Display → Graphics → pick your browser (Chrome or Edge) → High performance, then restart the browser.', 25000), 3000);
+}
 let composer = null; // effects on High/Medium (set up once the scene and camera exist)
 const labels = new CSS2DRenderer({ element: $('labels') });
 labels.setSize(innerWidth, innerHeight);
@@ -92,7 +103,7 @@ const NoirShader = {
       float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));
       float s = (mx - mn) / (mx + 1e-4);
       float lamp = clamp((c.r - c.b) * 2.0, 0.0, 1.0) * smoothstep(0.78, 1.0, mx);  // only the brightest warm light (lamps, windows)
-      float red = smoothstep(0.7, 0.9, s) * step(c.g * 2.4, c.r) * step(0.12, mx); // the phone box, the post box, lipstick
+      float red = smoothstep(0.45, 0.7, s) * step(c.g * 2.4, c.r) * step(0.12, mx); // the phone box, the post box, lipstick
       vec3 g = mix(vec3(l), c, clamp(sat + max(lamp * 0.7, red * 0.9), 0.0, 1.0));
       g *= mix(vec3(0.86, 0.92, 1.06), vec3(1.0), smoothstep(0.0, 0.55, l)); // cool shadows
       g = (g - 0.5) * contrast + 0.5;
@@ -131,7 +142,7 @@ function setupEffects() {
       composer.addPass(ao);
       aoPass = ao;
     }
-    if (Q.bloom) composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.55, 0.6, 0.78)); // lamps glow in the mist
+    if (Q.bloom) composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.4, 0.55, 0.82)); // lamps glow in the mist
     composer.addPass(new OutputPass());
     noirPass = new ShaderPass(NoirShader);
     composer.addPass(noirPass);
@@ -1182,7 +1193,7 @@ function tick() {
   adaptQuality(dt);
   labels.render(scene, camera);
   frames++; fpsT += dt;
-  if (fpsT > 1) { $('fps').textContent = `${Math.round(frames / fpsT)} fps · ${qName}`; frames = 0; fpsT = 0; }
+  if (fpsT > 1) { $('fps').textContent = `${Math.round(frames / fpsT)} fps · ${qName}${weakGpu ? ' · Intel' : ''}`; $('fps').title = gpuName; frames = 0; fpsT = 0; }
 }
 // ---- Real motion-captured moves (your Mixamo downloads in game-assets\\Mixamo) ------------------
 // Hand-picked from your Mixamo downloads (by their description), best first, for each of you.
@@ -1299,10 +1310,10 @@ async function loadMocap() {
   if (got) toast(`🎞️ ${got} real motion-captured moves loaded${REJECTED.length ? ` · ${REJECTED.length} skipped (looked wrong)` : ''}`);
   else toast('🎞️ No Mixamo moves found yet (game-assets\\Mixamo + manifest.json)');
 }
-function toast(t) {
+function toast(t, ms = 7000) {
   const el = document.createElement('div'); el.className = 'hud-pill game-toast'; el.textContent = t;
   const prev = document.querySelectorAll('.game-toast').length; el.style.marginTop = `${prev * 44}px`;
-  document.body.appendChild(el); setTimeout(() => el.remove(), 7000);
+  document.body.appendChild(el); setTimeout(() => el.remove(), ms);
 }
 
 updateEnv(true);

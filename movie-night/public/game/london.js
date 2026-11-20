@@ -170,7 +170,8 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
   photo(bricks[1], 'yellow_brick', 2.0, { rough: 0.8 }); bricks[1].color.set(0xffffff);
   photo(bricks[2], 'brick_wall_02', 2.0, { rough: 0.8 }); bricks[2].color.set(0xb8aca4);
   photo(bricks[3], 'yellow_brick', 2.0, { rough: 0.8 }); bricks[3].color.set(0xd8d0c8);
-  const stucco = photo(new THREE.MeshStandardMaterial({ color: 0xd8d2c4, roughness: 0.75 }), 'white_stucco', 2.0, { rough: 0.7 });
+  const stucco = photo(new THREE.MeshStandardMaterial({ color: 0xd8d2c4, roughness: 0.75 }), 'white_stucco', 2.0, { rough: 0.7, normal: 2 });
+  stucco.color.set(0x8f8b84); // painted stucco, grimy with London rain (not bright white panels)
   const stone = photo(new THREE.MeshStandardMaterial({ color: 0x8d8a83, roughness: 0.85 }), 'granite_tile', 2.3, { rough: 0.6 });
   const iron = new THREE.MeshStandardMaterial({ color: 0x15171a, roughness: 0.35, metalness: 0.6 });
   const slate = photo(new THREE.MeshStandardMaterial({ color: 0x2c2f35, roughness: 0.6 }), 'roof_slates_03', 3.0, { rough: 0.5 });
@@ -499,7 +500,7 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
     far.color.setRGB(0.21, 0.23, 0.26).lerp(new THREE.Color(0.075, 0.08, 0.095), night);
     lanternMat.emissiveIntensity = 0.6 + 2.6 * night;
     glassLit.emissiveIntensity = 0.25 + 1.3 * night;
-    poolMat.opacity = 0.45 * night;
+    poolMat.opacity = 0.2 * night; // (the wet road reflects the real lamps now)
     pbSide.emissiveIntensity = 0.2 + 1.2 * night;
     farWin.color.setRGB(1, 0.71, 0.38).multiplyScalar(0.25 + 0.75 * night);
     // Real lights at the lamps nearest you.
