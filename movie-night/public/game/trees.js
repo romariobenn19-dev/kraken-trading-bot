@@ -166,3 +166,24 @@ export function plantTrees(scene, spots, quality) {
   });
   return meshes;
 }
+
+/** Winter: bare trees (branches only, no leaves), e.g. London plane trees along a street. spots: [x, y, z, scale, seed] */
+export function plantBareTrees(scene, spots, quality) {
+  const bark = new THREE.MeshStandardMaterial({ map: barkTexture(), roughness: 0.8, color: 0x6e6660 }); // dark and wet
+  if (quality === 'low') bark.emissive = new THREE.Color(0x0c0c0e);
+  const kinds = [broadleaf(3), broadleaf(17), broadleaf(23)];
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+  kinds.forEach((k, ki) => {
+    const mine = spots.filter((sp) => sp[4] % kinds.length === ki);
+    if (!mine.length) return;
+    const im = new THREE.InstancedMesh(k.wood, bark, mine.length);
+    mine.forEach(([x, y, z, sc, seed], i) => {
+      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), (seed * 2.399) % (Math.PI * 2));
+      m.compose(new THREE.Vector3(x, y, z), q, s.set(sc, sc * 1.15, sc));
+      im.setMatrixAt(i, m);
+    });
+    im.castShadow = quality !== 'low';
+    im.receiveShadow = true;
+    scene.add(im);
+  });
+}

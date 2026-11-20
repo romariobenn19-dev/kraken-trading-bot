@@ -87,13 +87,13 @@ If Windows says *"Windows protected your PC"*, click **More info**, then **Run a
 
 ## 🎮 Our world (look test)
 
-The first step toward your own game: tap **🎮 Our world** at the top of Movie Night. It's a small valley with your house, a lake, trees and a sun that moves through the day into night (the porch light and windows glow at night). You walk around together and see each other live, with your pet names over your heads.
+The first step toward your own game: tap **🎮 Our world** at the top of Movie Night. It's a rainy winter night in London, in black and white like an old noir film: wet cobbled-looking streets, Victorian terraces with your house (black front door) among them, gas-style street lamps glowing in the rain, bare plane trees, a red phone box and post box, the Thames embankment and Big Ben in the distance showing the real London time. Days are grey and overcast; 🌙 skips between day and night and 🔊 turns the rain sound on or off. You walk around together and see each other live, with your pet names over your heads.
 
 - **Laptop:** WASD or the arrow keys to walk, Shift to run, drag to look around, scroll to zoom, **G** to dance, **K** to blow a kiss.
 - **Tablet:** the left thumb stick to walk (push it all the way to run), drag on the right to look around, buttons for 🏃 run, 💃 dance and 💋 kiss.
 - **Graphics** (top right): High, Medium or Low. The laptop starts on High, the tablet on Low; the fps number shows how smoothly it runs.
 - **Your own characters:** put Mixamo characters (downloaded "With Skin", "T-pose", FBX) in `game-assets\Characters` named `him.fbx` and `her.fbx` (or .glb). All the moves are fitted to them automatically.
-- **Real moves:** put your Mixamo animations and their `manifest.json` in `game-assets\Mixamo`.
+- **Real moves:** put your Mixamo animations and their `manifest.json` in `game-assets\Mixamo`. If a walk, run or idle animation comes out wrong (arms stuck out, "zombie" walk), the game skips it and uses the built-in one instead, and tells you which file it skipped.
 - The 3D models and textures (about 12 MB) are fetched by the laptop the first time and kept there; they aren't stored in GitHub. The characters come from the three.js examples (Mixamo models), for your own use.
 
 ## Install it as an app

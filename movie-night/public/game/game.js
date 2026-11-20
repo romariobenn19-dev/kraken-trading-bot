@@ -15,6 +15,10 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { plantTrees } from './trees.js';
+import { buildLondon } from './london.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+// The setting: a rainy winter night in London (true), or the green valley (false).
+const LONDON = true;
 import { pose, stopPose, applyPoses, sound, cinematic, POSES } from './actions.js';
 
 const $ = (id) => document.getElementById(id);
@@ -73,7 +77,47 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight); labels.setSize(innerWidth, innerHeight);
   if (composer) composer.setSize(innerWidth, innerHeight);
 });
+// Noir grade: colours drained to almost black & white, except warm light (lamps, windows) and
+// strong reds (phone box, post box) which keep their colour; deeper contrast, cool shadows,
+// a vignette and a little film grain.
+const NoirShader = {
+  uniforms: { tDiffuse: { value: null }, time: { value: 0 }, sat: { value: 0.22 }, contrast: { value: 1.14 } },
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `uniform sampler2D tDiffuse; uniform float time; uniform float sat; uniform float contrast; varying vec2 vUv;
+    float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+    void main() {
+      vec3 c = texture2D(tDiffuse, vUv).rgb;
+      float l = dot(c, vec3(0.299, 0.587, 0.114));
+      float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));
+      float s = (mx - mn) / (mx + 1e-4);
+      float lamp = clamp((c.r - c.b) * 2.0, 0.0, 1.0) * smoothstep(0.78, 1.0, mx);  // only the brightest warm light (lamps, windows)
+      float red = smoothstep(0.55, 0.8, s) * step(c.g * 1.7, c.r) * step(0.12, mx); // the phone box, the post box, lipstick
+      vec3 g = mix(vec3(l), c, clamp(sat + max(lamp * 0.7, red * 0.9), 0.0, 1.0));
+      g *= mix(vec3(0.86, 0.92, 1.06), vec3(1.0), smoothstep(0.0, 0.55, l)); // cool shadows
+      g = (g - 0.5) * contrast + 0.5;
+      vec2 d = vUv - 0.5; g *= 1.0 - dot(d, d) * 0.95;                // vignette
+      g += (hash(vUv * 900.0 + time) - 0.5) * 0.035;                    // grain
+      gl_FragColor = vec4(clamp(g, 0.0, 1.0), 1.0);
+    }`,
+};
+let noirPass = null;
 function setupEffects() {
+  if (LONDON) {
+    composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene, camera));
+    if (Q.ao) {
+      const ao = new GTAOPass(scene, camera, innerWidth, innerHeight);
+      ao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.4, thickness: 1.2, scale: 1.1, samples: 12 });
+      ao.blendIntensity = 0.85;
+      composer.addPass(ao);
+    }
+    if (Q.bloom) composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.55, 0.6, 0.78)); // lamps glow in the mist
+    composer.addPass(new OutputPass());
+    noirPass = new ShaderPass(NoirShader);
+    composer.addPass(noirPass);
+    if (Q.smaa) composer.addPass(new SMAAPass(innerWidth * renderer.getPixelRatio(), innerHeight * renderer.getPixelRatio()));
+    return;
+  }
   if (!Q.ao && !Q.bloom && !Q.smaa) return;
   composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
@@ -112,6 +156,7 @@ function noise(x, z) {
 function fbm(x, z) { let t = 0, amp = 1, f = 1; for (let i = 0; i < 4; i++) { t += amp * noise(x * f, z * f); amp *= 0.5; f *= 2; } return t / 1.875; }
 const LAKE = new THREE.Vector2(62, -48), LAKE_R = 30, SIZE = 420;
 function heightAt(x, z) {
+  if (LONDON) return 0;
   const d = Math.hypot(x, z);
   let h = 0.8 + (fbm(x / 55 + 3, z / 55 - 2) - 0.5) * 9;
   h += smooth(110, 200, d) * 45 * fbm(x / 35 + 9, z / 35);              // mountains round the valley
@@ -141,7 +186,7 @@ terrainGeo.rotateX(-Math.PI / 2);
 const grassTex = tex('grass.jpg', 70, true);
 const terrain = new THREE.Mesh(terrainGeo, new THREE.MeshStandardMaterial({ map: grassTex, vertexColors: true, roughness: 0.95, metalness: 0 }));
 terrain.receiveShadow = true;
-scene.add(terrain);
+if (!LONDON) scene.add(terrain);
 
 // ---- Water ----------------------------------------------------------------------------------------
 let water = null;
@@ -157,7 +202,7 @@ if (Q.water) {
   water.rotation.x = -Math.PI / 2;
 }
 water.position.set(LAKE.x, 0, LAKE.y);
-scene.add(water);
+if (!LONDON) scene.add(water); else water = null; // (London has the Thames instead)
 
 // ---- Sky, sun, moon, stars -------------------------------------------------------------------
 const sky = new Sky();
@@ -167,7 +212,7 @@ sky.material.uniforms.turbidity.value = 6;
 sky.material.uniforms.rayleigh.value = 1.6;
 sky.material.uniforms.mieCoefficient.value = 0.004;
 sky.material.uniforms.mieDirectionalG.value = 0.8;
-scene.add(sky);
+if (!LONDON) scene.add(sky);
 const sunLight = new THREE.DirectionalLight(0xfff1dc, 3);
 sunLight.castShadow = Q.shadows;
 sunLight.shadow.mapSize.set(Q.shadowSize, Q.shadowSize);
@@ -190,7 +235,7 @@ const stars = (() => {
   const m = new THREE.PointsMaterial({ color: 0xffffff, size: 2.2, sizeAttenuation: false, transparent: true, opacity: 0, fog: false, depthWrite: false });
   return new THREE.Points(g, m);
 })();
-scene.add(stars);
+if (!LONDON) scene.add(stars);
 // Clouds: a soft layer drifting overhead.
 let clouds = null;
 if (Q.clouds) {
@@ -216,7 +261,7 @@ if (Q.clouds) {
       + ' void main() { float a = texture2D(map, vUv * 3.0 + offset).a * opacity * (1.0 - smoothstep(450.0, 1100.0, vD)); gl_FragColor = vec4(tint, a); }',
   }));
   clouds.rotation.x = Math.PI / 2;
-  clouds.position.y = 260;
+  clouds.position.y = LONDON ? 140 : 260;
   scene.add(clouds);
 }
 const pmrem = new THREE.PMREMGenerator(renderer);
@@ -254,7 +299,7 @@ function groundAt(x, z) {
   const dx = Math.abs(x - HX), dz = Math.abs(z - HZ);
   if (dx <= W / 2 - 0.1 && dz <= D / 2 - 0.1) return HY + 0.4;   // floorboards
   if (dx <= W / 2 + 0.3 && dz <= D / 2 + 0.3) return HY + 0.35;  // the stone step round the house
-  return heightAt(x, z);
+  return london ? london.groundAt(x, z) : heightAt(x, z);
 }
 box(W + 0.6, 0.35, D + 0.6, trimMat, 0, 0.17, 0, { shadow: false });                              // foundation
 box(W - 0.2, 0.06, D - 0.2, wood, 0, 0.37, 0, { shadow: false, repeat: [3, 3] });                    // floor
@@ -267,11 +312,17 @@ box((W - doorW) / 2, H, T, brick, (W + doorW) / 4, H / 2 + 0.35, D / 2, { collid
 box(doorW, 0.7, T, brick, 0, H + 0.35 - 0.35, D / 2, { repeat: [0.4, 0.25] });                         // over the door
 const door = box(doorW - 0.1, 2.35, 0.08, wood, 0, 1.55, D / 2 + 0.6, { shadow: true });
 door.rotation.y = -1.2; door.position.x = -0.55;
+if (LONDON) {
+  // A glossy black London front door, opening inwards (not out over the pavement).
+  door.material = new THREE.MeshStandardMaterial({ color: 0x0e0f12, roughness: 0.25, metalness: 0.2 });
+  door.rotation.y = 1.25; door.position.set(-0.45, 1.55, D / 2 - 0.68);
+}
 for (const [x, z, ry] of [[-3, D / 2 + 0.16, 0], [3, D / 2 + 0.16, 0], [-W / 2 - 0.16, -1.5, Math.PI / 2], [W / 2 + 0.16, 1.5, Math.PI / 2], [-2.5, -D / 2 - 0.16, 0], [2.5, -D / 2 - 0.16, 0]]) {
   const fr = box(1.7, 1.4, 0.1, trimMat, x, 2.0, z, { shadow: false }); fr.rotation.y = ry;
   const gl = box(1.45, 1.15, 0.12, windowMat, x, 2.0, z, { shadow: false }); gl.rotation.y = ry;
 }
-// Gable roof
+// Gable roof (in London the house becomes a terraced house with floors above instead)
+if (!LONDON) {
 const roofRun = W / 2 + 0.8, pitch = 0.55, slab = (D / 2 + 0.7) / Math.cos(pitch);
 for (const s of [-1, 1]) {
   // The roof passes through the top of the walls and overhangs them by 0.7.
@@ -288,6 +339,7 @@ for (const s of [-1, 1]) {
   house.add(g);
 }
 void roofRun;
+}
 // Inside: rug, sofa, TV with our names, bed, lamp
 const rug = box(4, 0.02, 2.6, new THREE.MeshStandardMaterial({ color: 0xe7a9a0, roughness: 1 }), -1, 0.41, 0.6, { shadow: false });
 void rug;
@@ -320,10 +372,18 @@ const porchBulb = house.children[house.children.length - 1];
 const pathTex = tex('grass.jpg', 1, true); pathTex.repeat.set(0.6, 4);
 const path = new THREE.Mesh(new THREE.PlaneGeometry(2, 14), new THREE.MeshStandardMaterial({ color: 0x9a7a58, roughness: 1, map: pathTex }));
 path.rotation.x = -Math.PI / 2; path.position.set(HX, HY + 0.03, HZ + D / 2 + 7.2); path.receiveShadow = true;
-scene.add(path);
+if (!LONDON) scene.add(path);
+
+// ---- London --------------------------------------------------------------------------------------
+const london = LONDON ? buildLondon({ scene, Q, qName, tex, colliders, circles, house: { HX, HZ, W, D, TOP: H + 0.35 } }) : null;
+if (london) {
+  water = london.water;
+  scene.fog = new THREE.Fog(0x0b0d12, 12, lowQ() ? 120 : 170);
+}
+function lowQ() { return qName === 'low'; }
 
 // ---- Trees & rocks (instanced: one draw call each) --------------------------------------------
-{
+if (!LONDON) {
   const rnd = (() => { let s = 1234567; return () => ((s = (s * 16807) % 2147483647) / 2147483647); })();
   const spots = [];
   for (let tries = 0; spots.length < Q.trees && tries < 6000; tries++) {
@@ -657,6 +717,7 @@ class Avatar {
 
 const me = new Avatar(myKind, myName);
 me.root.position.set(HX + (myKind === 'him' ? -1 : 1), 0, HZ + D / 2 + 3);
+if (london) me.root.position.set(london.spawn.x + (myKind === 'him' ? -0.7 : 0.7), london.spawn.y, london.spawn.z);
 me.root.position.y = groundAt(me.root.position.x, me.root.position.z);
 let heading = Math.PI; // facing away from the house, toward the path
 const others = new Map();
@@ -856,8 +917,15 @@ function updateActs() {
 }
 
 // ---- Time of day -------------------------------------------------------------------------------
-const DAY_SECONDS = 8 * 60; // one day = 8 minutes in this test
-let dayT = 0.36;            // morning
+const DAY_SECONDS = (LONDON ? 16 : 8) * 60;
+let dayT = LONDON ? 0.82 : 0.36;  // London starts at night
+let dayFactor = 1;
+if (london) {
+  const rb = $('rainBtn');
+  const show = () => { rb.textContent = london.muted() ? '🔇' : '🔊'; };
+  rb.onclick = () => { london.setMuted(!london.muted()); show(); };
+  show();
+} else $('rainBtn').classList.add('hidden');
 $('timeBtn').onclick = () => { dayT = dayT > 0.25 && dayT < 0.75 ? 0.8 : 0.33; updateEnv(true); };
 const sunDir = new THREE.Vector3();
 let envAt = -1;
@@ -882,7 +950,20 @@ function updateEnv(force) {
   porchLight.intensity = night * 10;
   porchBulb.material.emissiveIntensity = night * 3;
   scene.fog.color.setHSL(0.58, 0.35 - golden * 0.1, 0.08 + 0.7 * day).lerp(new THREE.Color(0xf2b27a), golden * day * 0.35);
-  if (water.material.uniforms) water.material.uniforms.sunDirection.value.copy(sunDir);
+  if (water && water.material.uniforms) water.material.uniforms.sunDirection.value.copy(sunDir);
+  dayFactor = day;
+  if (london) {
+    // Winter overcast: no hard sun, soft cold light by day; at night the lamps do the work.
+    sunLight.intensity = 1.1 * day + 0.05;
+    sunLight.color.setRGB(0.82, 0.86, 0.92);
+    moonLight.intensity = 0.18 * (1 - day);
+    hemi.color.setRGB(0.55, 0.6, 0.68); hemi.groundColor.setRGB(0.12, 0.11, 0.1);
+    hemi.intensity = (0.24 + 0.45 * day) * (Q.env ? 1 : 1.6);
+    renderer.toneMappingExposure = 0.78 + 0.06 * day;
+    scene.fog.color.setRGB(0.48, 0.51, 0.55).lerp(new THREE.Color(0.035, 0.04, 0.055), 1 - day);
+    if (clouds) { clouds.material.uniforms.tint.value.setRGB(0.42, 0.44, 0.48).multiplyScalar(0.15 + 0.85 * day); clouds.material.uniforms.opacity.value = 0.9; }
+    stars.material.opacity = 0;
+  }
   $('timeBtn').textContent = day > 0.5 ? '🌙' : '☀️';
   // Reflections & soft sky light (every couple of in-game minutes)
   if (Q.env && (force || Math.abs(dayT - envAt) > 0.015)) {
@@ -890,9 +971,10 @@ function updateEnv(force) {
     envSky.material.uniforms.sunPosition.value.copy(sunDir);
     for (const k of ['turbidity', 'rayleigh', 'mieCoefficient', 'mieDirectionalG']) envSky.material.uniforms[k].value = sky.material.uniforms[k].value;
     if (envRT) envRT.dispose();
-    envRT = pmrem.fromScene(envScene);
+    if (london) london.update(0, me ? me.root.position : new THREE.Vector3(), camera.position, day); // sky colours first
+    envRT = pmrem.fromScene(london ? london.envScene : envScene);
     scene.environment = envRT.texture;
-    scene.environmentIntensity = 0.15 + 0.4 * day;
+    scene.environmentIntensity = london ? 0.35 + 0.3 * day : 0.15 + 0.4 * day;
   }
 }
 
@@ -943,6 +1025,7 @@ function collide(p) {
     const dx = p.x - x, dz = p.z - z, d = Math.hypot(dx, dz), r = r0 + 0.35;
     if (d < r && d > 1e-4) { p.x = x + (dx / d) * r; p.z = z + (dz / d) * r; }
   }
+  if (london) { const b = london.bounds; p.x = clamp(p.x, b.x0, b.x1); p.z = clamp(p.z, b.z0, b.z1); return; }
   const lim = SIZE * 0.45;
   p.x = clamp(p.x, -lim, lim); p.z = clamp(p.z, -lim, lim);
 }
@@ -1031,6 +1114,18 @@ function tick() {
     camTarget.y + Math.sin(pitch) * dist,
     camTarget.z + Math.cos(yaw) * Math.cos(pitch) * dist);
   cp.y = Math.max(cp.y, heightAt(cp.x, cp.z) + 0.6);
+  if (london) {
+    // Don't let the camera go inside a building: bring it closer instead.
+    const inside = (v) => colliders.some(([x0, z0, x1, z1]) => v.x > x0 - 0.2 && v.x < x1 + 0.2 && v.z > z0 - 0.2 && v.z < z1 + 0.2 && v.y < 14)
+      || v.z > london.bounds.z1 + 0.4 || v.x < london.bounds.x0 - 0.4;
+    if (inside(cp)) {
+      const dir = cp.clone().sub(camTarget);
+      const full = dir.length(); dir.normalize();
+      let d = 0.6;
+      while (d + 0.2 < full && !inside(camTarget.clone().addScaledVector(dir, d + 0.2))) d += 0.2;
+      cp.copy(camTarget).addScaledVector(dir, d);
+    }
+  }
   camera.position.copy(cp);
   camera.lookAt(camTarget);
   // Shadows follow me
@@ -1038,7 +1133,9 @@ function tick() {
   sunLight.position.copy(me.root.position).addScaledVector(sunDir, 120);
   moonLight.target.position.copy(me.root.position);
   moonLight.position.copy(me.root.position).add(new THREE.Vector3(-60, 90, 40));
-  if (water.material.uniforms) water.material.uniforms.time.value += dt * 0.6;
+  if (water && water.material.uniforms) water.material.uniforms.time.value += dt * (london ? 0.3 : 0.6);
+  if (london) london.update(dt, me.root.position, camera.position, dayFactor);
+  if (noirPass) noirPass.uniforms.time.value += dt;
   if (clouds) { clouds.material.uniforms.offset.value.x += dt * 0.0012; clouds.position.x = me.root.position.x; clouds.position.z = me.root.position.z; }
   // Tell the other player (10x a second, only when something changed)
   sendT += dt;
@@ -1089,6 +1186,29 @@ const MOCAP = {
   flinch: [['surprised', 'flinch', 'shocked', 'startled'], ['rifle', 'sword']],
   cheer: [['cheering', 'cheer', 'victory', 'celebrat'], ['rifle', 'sword']],
 };
+/**
+ * Safety check for standing/walking/running: on average the upper arms should hang down by the
+ * sides. If they stick out forward (the "zombie" look of a badly fitted file), don't use it.
+ */
+const REJECTED = [];
+function armsHangDown(clip, kind) {
+  const m = SkeletonUtils.clone(BASE[kind]);
+  const mx = new THREE.AnimationMixer(m);
+  mx.clipAction(clip).play();
+  const inv = FRAME[kind].clone().invert();
+  let down = 0, fwd = 0, n = 0;
+  for (let i = 0; i < 6; i++) {
+    mx.setTime((clip.duration * (i + 0.5)) / 6);
+    m.updateMatrixWorld(true);
+    for (const side of ['Left', 'Right']) {
+      const a = m.getObjectByName(`mixamorig${side}Arm`), b = m.getObjectByName(`mixamorig${side}ForeArm`);
+      if (!a || !b) return true;
+      const d = b.getWorldPosition(new THREE.Vector3()).sub(a.getWorldPosition(new THREE.Vector3())).normalize().applyQuaternion(inv);
+      down += -d.y; fwd += Math.abs(d.z); n++;
+    }
+  }
+  return down / n > 0.6 && fwd / n < 0.55;
+}
 async function loadMocap() {
   let list = [];
   try { list = (await (await fetch('/api/game/anims', { cache: 'no-store' })).json()).anims || []; } catch { return; }
@@ -1126,6 +1246,11 @@ async function loadMocap() {
         if (!obj.__ready) { normalizeRig(obj); obj.__fixedTPose = ensureTPose(obj); obj.__ready = true; }
         obj.updateMatrixWorld(true);
         const c = borrow(anim, { root: obj, frame: obj.__frame || (obj.__frame = bodyFrame(obj)) }, kind);
+        if (['idle', 'walk', 'run'].includes(move) && !armsHangDown(c, kind)) {
+          console.warn(`Not using "${pick.description}" for ${move}: the arms come out wrong (zombie pose); keeping the built-in one.`);
+          REJECTED.push(`${move} (${pick.description})`);
+          continue;
+        }
         c.name = `${move}:${pick.description || pick.name}`;
         CLIPS[kind][move] = c;
         for (const av of [me, ...[...others.values()].map((o) => o.av)]) {
@@ -1138,7 +1263,7 @@ async function loadMocap() {
       } catch (e) { console.warn('Could not use', pick.file, e.message); }
     }
   }
-  if (got) toast(`🎞️ ${got} real motion-captured moves loaded`);
+  if (got) toast(`🎞️ ${got} real motion-captured moves loaded${REJECTED.length ? ` · ${REJECTED.length} skipped (looked wrong)` : ''}`);
   else toast('🎞️ No Mixamo moves found yet (game-assets\\Mixamo + manifest.json)');
 }
 function toast(t) {
