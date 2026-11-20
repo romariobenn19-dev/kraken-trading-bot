@@ -139,6 +139,13 @@ function setupEffects() {
       const ao = new GTAOPass(scene, camera, innerWidth, innerHeight);
       ao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.4, thickness: 1.2, scale: 1.1, samples: 12 });
       ao.blendIntensity = 0.85;
+      // Rain, splashes, halos and pools are see-through: don't let them cast contact shadows.
+      const aoRender = ao.render.bind(ao);
+      ao.render = (...a) => {
+        const hide = london.see.filter((o) => o.visible);
+        for (const o of hide) o.visible = false;
+        try { aoRender(...a); } finally { for (const o of hide) o.visible = true; }
+      };
       composer.addPass(ao);
       aoPass = ao;
     }
@@ -754,6 +761,67 @@ class Avatar {
   dispose() { scene.remove(this.root); this.tag.element.remove(); }
 }
 
+// ---- People out in the rain: pedestrians walking up and down the pavements -----------------------
+const peds = [];
+const PAVE_Y = 0.12; // pavement height in London
+if (london) {
+  const N = { high: 10, medium: 6, low: 3 }[qName] || 4;
+  const pr = (() => { let s = 4242; return () => ((s = (s * 16807) % 2147483647) - 1) / 2147483646; })();
+  const walkFor = {
+    soldier: clip(soldier, 'Walk'),
+    michelle: (() => { try { return borrow(clip(soldier, 'Walk'), 'soldier', 'michelle'); } catch { return null; } })(),
+  };
+  const coat = new THREE.MeshStandardMaterial({ color: 0x1a1b1f, roughness: 0.55 });
+  const umbMat = new THREE.MeshStandardMaterial({ color: 0x0c0c0e, roughness: 0.3, side: THREE.DoubleSide });
+  for (let i = 0; i < N; i++) {
+    const kind = i % 2 ? 'michelle' : 'soldier';
+    if (!walkFor[kind]) continue;
+    const src = SKEL[kind];
+    const model = SkeletonUtils.clone(src);
+    const bb = new THREE.Box3().setFromObject(src);
+    model.scale.setScalar((1.62 + pr() * 0.22) / Math.max(0.1, bb.max.y - bb.min.y));
+    const f = new THREE.Vector3(0, 0, 1).applyQuaternion(FRAME[kind]);
+    model.rotation.y = Math.atan2(-f.x, f.z) || 0;
+    model.traverse((o) => {
+      if (!o.isMesh) return;
+      o.castShadow = qName === 'high'; o.receiveShadow = true; o.frustumCulled = false;
+      if (kind === 'soldier') o.material = coat; // a dark winter coat, not a uniform
+    });
+    const root = new THREE.Group(); root.add(model);
+    if (pr() < 0.65) { // an umbrella
+      const u = new THREE.Group();
+      const can = new THREE.Mesh(new THREE.ConeGeometry(0.55, 0.3, 10, 1, true), umbMat); can.position.y = 2.05; u.add(can);
+      const sh = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.95, 5), umbMat); sh.position.y = 1.6; u.add(sh);
+      u.position.set(0.16, 0, 0.12); root.add(u);
+    }
+    const mixer = new THREE.AnimationMixer(model);
+    const act = mixer.clipAction(walkFor[kind]); act.play(); act.time = pr() * 2;
+    const lane = london.lanes[i % 2];
+    const dir = pr() < 0.5 ? 1 : -1;
+    const p = { root, mixer, act, lane, dir, x: lane.x0 + pr() * (lane.x1 - lane.x0), off: (pr() - 0.5) * 0.8, side: 0, speed: 1.15 + pr() * 0.3 };
+    root.position.set(p.x, PAVE_Y, lane.z + p.off);
+    scene.add(root);
+    peds.push(p);
+  }
+}
+function updatePeds(dt) {
+  for (const p of peds) {
+    p.x += p.dir * p.speed * dt;
+    if (p.x > p.lane.x1) { p.x = p.lane.x1; p.dir = -1; } else if (p.x < p.lane.x0) { p.x = p.lane.x0; p.dir = 1; }
+    // Step aside for you (and for each other) rather than walking through.
+    let want = 0;
+    const pz = p.lane.z + p.off;
+    for (const a of [me.root.position, ...[...others.values()].map((o) => o.av.root.position)]) {
+      if (Math.abs(a.x - p.x) < 2.2 && Math.abs(a.z - pz) < 1.2) want = a.z > pz ? -1.1 : 1.1;
+    }
+    p.side += (want - p.side) * Math.min(1, dt * 3);
+    p.root.position.set(p.x, PAVE_Y, pz + p.side);
+    p.root.rotation.y = p.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+    const near = p.root.position.distanceToSquared(camera.position) < 70 * 70;
+    p.root.visible = near;
+    if (near) p.mixer.update(dt * p.speed / 1.3);
+  }
+}
 const me = new Avatar(myKind, myName);
 me.root.position.set(HX + (myKind === 'him' ? -1 : 1), 0, HZ + D / 2 + 3);
 if (london) me.root.position.set(london.spawn.x + (myKind === 'him' ? -0.7 : 0.7), london.spawn.y, london.spawn.z);
@@ -1130,6 +1198,7 @@ function tick() {
   me.root.rotation.y = heading;
   me.play(anim);
   me.mixer.update(dt);
+  updatePeds(dt);
   applyPoses(me, findAvatar);
   if (window.__poseHook) window.__poseHook(me);
   // The other player: glide to where they are

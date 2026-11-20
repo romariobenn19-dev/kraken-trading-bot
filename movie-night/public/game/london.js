@@ -119,11 +119,12 @@ function phoneBoxTexture() {
 // leaves anything black.
 const UV_M = 3;
 const phLoader = new THREE.TextureLoader();
+let PH_RES = '1k'; // 2k on High (set in buildLondon)
 const phCache = new Map();
 function phTex(id, kind, sizeM) {
   const key = `${id}_${kind}`;
   if (!phCache.has(key)) {
-    phCache.set(key, new Promise((ok, fail) => phLoader.load(`/game-assets/ph_${id}_${kind}.jpg`, (t) => {
+    phCache.set(key, new Promise((ok, fail) => phLoader.load(`/game-assets/ph_${id}_${kind}${PH_RES === '1k' ? '' : '_' + PH_RES}.jpg`, (t) => {
       t.wrapS = t.wrapT = THREE.RepeatWrapping;
       t.repeat.set(UV_M / sizeM, UV_M / sizeM);
       t.anisotropy = 8;
@@ -197,6 +198,7 @@ function box(w, h, d, x, y, z, tile = 3) {
 
 export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H }) {
   const lowQ = qName === 'low';
+  PH_RES = qName === 'high' ? '2k' : '1k';
   const groups = new Map(); // material -> [geometries] (merged at the end: few draw calls)
   const add = (mat, geo) => { if (!groups.has(mat)) groups.set(mat, []); groups.get(mat).push(geo); };
 
@@ -435,10 +437,14 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
     placeModel(scene, 'street_lamp_02', mats, { onMaterial: glow }).catch(() => {});
   }
   for (const [x, z] of lamps) circles.push([x, z, 0.18]);
+  // A soft halo of light in the rainy mist round every lamp.
+  const haloMat = new THREE.SpriteMaterial({ map: lightPoolTexture(), color: 0xffd9a8, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, fog: true });
+  const see = []; // see-through effects (kept out of the ambient-occlusion pass)
+  for (const [x, z] of lamps) { const h = new THREE.Sprite(haloMat); h.position.set(x, LAMP_Y, z); h.scale.set(2.6, 2.6, 1); scene.add(h); see.push(h); }
   // Pools of lamplight on the wet ground (cheap: a soft glow each), and a few real lights near you.
   const poolMat = new THREE.MeshBasicMaterial({ map: lightPoolTexture(), transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, fog: true });
   const pools = inst(() => { const g = new THREE.PlaneGeometry(8, 8); g.rotateX(-Math.PI / 2); return g; }, poolMat, lamps, ([x, z], p, q, s) => { p.set(x, PAVE + 0.02, z); q.identity(); s.set(1, 1, 1); });
-  if (pools) { pools.renderOrder = 2; pools.receiveShadow = false; }
+  if (pools) { pools.renderOrder = 2; pools.receiveShadow = false; see.push(pools); }
   const NL = { high: 6, medium: 4, low: 2 }[qName] || 3;
   const lampLights = [];
   for (let i = 0; i < NL; i++) { const l = new THREE.PointLight(0xffd2a0, 0, 18, 1.4); l.position.set(0, -50, 0); scene.add(l); lampLights.push(l); }
@@ -581,6 +587,31 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
     fragmentShader: 'uniform vec3 color; uniform float opacity; varying float vA; void main() { gl_FragColor = vec4(color, opacity * vA); }',
   });
   const rain = new THREE.LineSegments(rg, rainMat);
+  // Raindrops splashing on the ground round you: small rings that spread and fade.
+  const NS = { high: 700, medium: 400, low: 150 }[qName] || 300;
+  const sg = new THREE.InstancedBufferGeometry();
+  sg.index = new THREE.PlaneGeometry(1, 1).index; sg.setAttribute('position', new THREE.PlaneGeometry(1, 1).attributes.position); sg.setAttribute('uv', new THREE.PlaneGeometry(1, 1).attributes.uv);
+  { const sr = rng(77), a = new Float32Array(NS * 3); for (let i = 0; i < NS; i++) { a[i * 3] = (sr() - 0.5) * 26; a[i * 3 + 1] = (sr() - 0.5) * 26; a[i * 3 + 2] = sr(); } sg.setAttribute('aSeed', new THREE.InstancedBufferAttribute(a, 3)); }
+  sg.instanceCount = NS;
+  const splashMat = new THREE.ShaderMaterial({
+    uniforms: { time: { value: 0 }, center: { value: new THREE.Vector3() }, opacity: { value: 0.5 }, kerbN: { value: KERB_N }, kerbF: { value: KERB_F }, pave: { value: PAVE } },
+    vertexShader: `attribute vec3 aSeed; uniform float time; uniform vec3 center; uniform float kerbN, kerbF, pave; varying vec2 vUv; varying float vT;
+      float h(float n) { return fract(sin(n) * 43758.5453); }
+      void main() {
+        float k = time * 1.6 + aSeed.z; float cyc = floor(k); vT = fract(k);
+        vec2 p = center.xz + aSeed.xy + vec2(h(cyc + aSeed.x) - 0.5, h(cyc * 1.7 + aSeed.y) - 0.5) * 6.0;
+        float y = (p.y > kerbN && p.y < kerbF) ? 0.012 : pave + 0.012;
+        float s = 0.04 + 0.22 * vT;
+        vUv = uv;
+        gl_Position = projectionMatrix * viewMatrix * vec4(p.x + position.x * s, y, p.y - position.y * s, 1.0);
+      }`,
+    fragmentShader: `uniform float opacity; varying vec2 vUv; varying float vT;
+      void main() { float r = length(vUv - 0.5) * 2.0; float ring = smoothstep(0.7, 0.85, r) * (1.0 - smoothstep(0.85, 1.0, r));
+        gl_FragColor = vec4(vec3(0.85, 0.88, 0.95), ring * (1.0 - vT) * opacity); }`,
+    transparent: true, depthWrite: false,
+  });
+  const splashes = new THREE.Mesh(sg, splashMat); splashes.frustumCulled = false; splashes.renderOrder = 3;
+  scene.add(splashes); see.push(splashes, rain);
   rain.frustumCulled = false;
   rain.renderOrder = 5;
   scene.add(rain);
@@ -619,6 +650,9 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
     const night = 1 - day;
     rainMat.uniforms.time.value = t;
     rainMat.uniforms.center.value.copy(camPos);
+    splashMat.uniforms.time.value = t;
+    splashMat.uniforms.center.value.set(player.x, 0, player.z);
+    haloMat.opacity = 0.08 + 0.42 * night;
     rainMat.uniforms.opacity.value = 0.32 + 0.25 * night;
     // Sky: overcast grey by day, near-black with an orange city glow at night.
     cTop.setRGB(0.36, 0.39, 0.43).lerp(new THREE.Color(0.012, 0.016, 0.028), night);
@@ -650,7 +684,9 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
     if (x >= X_ROAD_END) return PAVE;
     return 0;
   }
+  const lanes = [{ z: NEAR_FRONT + 2.35, x0: X_WEST + 4, x1: X_ROAD_END - 4 }, { z: FAR_FRONT - 2.35, x0: X_WEST + 4, x1: X_ROAD_END - 4 }];
   return {
+    lanes, see,
     update, groundAt, skyDome, envScene, water, setMuted, muted,
     bounds: { x0: X_WEST + 0.6, x1: X_RIVER - 0.45, z0: H.HZ - H.D / 2 + 0.4, z1: FAR_FRONT - 0.4 },
     spawn: new THREE.Vector3(H.HX + 1.5, PAVE, NEAR_FRONT + 1.6),
