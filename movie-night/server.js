@@ -126,6 +126,17 @@ const GAME_ASSETS = {
   // A real rainy street at night (Poly Haven, CC0): the reflections on the wet street.
   'ph_night.hdr': 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/cobblestone_street_night_1k.hdr',
 };
+// Real 3D models for London (Poly Haven, CC0): a Victorian street lamp, a wall lantern and a car
+// under a cover. Each is a .gltf with its .bin and textures beside it.
+{
+  const PHM = 'https://dl.polyhaven.org/file/ph-assets/Models';
+  for (const id of ['street_lamp_01', 'street_lamp_02', 'covered_car']) {
+    const dir = `ph_models/${id}`;
+    GAME_ASSETS[`${dir}/${id}_1k.gltf`] = `${PHM}/gltf/1k/${id}/${id}_1k.gltf`;
+    GAME_ASSETS[`${dir}/${id}.bin`] = `${PHM}/gltf/8k/${id}/${id}.bin`;
+    for (const k of ['diff', 'nor_gl', 'arm']) GAME_ASSETS[`${dir}/textures/${id}_${k}_1k.jpg`] = `${PHM}/jpg/1k/${id}/${id}_${k}_1k.jpg`;
+  }
+}
 // Photographed materials for London (Poly Haven, CC0): colour, surface detail (normal) and
 // ambient-occlusion / roughness / metal packed in one image, 1k each.
 for (const id of ['yellow_brick', 'red_brick_03', 'brick_wall_02', 'precast_stone_paving', 'asphalt_02', 'granite_tile', 'roof_slates_03', 'white_stucco']) {
@@ -202,7 +213,7 @@ function gameAsset(name) {
     gameDownloads.set(name, (async () => {
       const r = await fetch(GAME_ASSETS[name]);
       if (!r.ok) throw new Error(`${r.status}`);
-      fs.mkdirSync(GAME_ASSETS_DIR, { recursive: true });
+      fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(`${file}.part`, Buffer.from(await r.arrayBuffer()));
       fs.renameSync(`${file}.part`, file);
       return file;

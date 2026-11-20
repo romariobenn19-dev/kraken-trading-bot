@@ -11,6 +11,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Water } from 'three/addons/objects/Water.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { plantBareTrees } from './trees.js';
 
 const PAVE = 0.12;                 // pavement height above the road
@@ -146,6 +147,43 @@ export function photo(mat, id, sizeM, { normal = 1, rough = 1, ao = 1 } = {}) {
   return mat;
 }
 
+// ---- Real 3D models (Poly Haven, CC0) ----------------------------------------------------------
+const gltfLoader = new GLTFLoader();
+const modelCache = new Map();
+function loadModel(id) {
+  if (!modelCache.has(id)) modelCache.set(id, gltfLoader.loadAsync(`/game-assets/ph_models/${id}/${id}_1k.gltf`).then((g) => { g.scene.updateMatrixWorld(true); return g.scene; }));
+  return modelCache.get(id);
+}
+/** Put one copy of model `id` at each matrix (one draw call per part). Resolves to the meshes. */
+function placeModel(scene, id, matrices, { shadow = false, onMaterial } = {}) {
+  return loadModel(id).then((root) => {
+    const out = [];
+    root.traverse((o) => {
+      if (!o.isMesh) return;
+      if (onMaterial) onMaterial(o.material);
+      const im = new THREE.InstancedMesh(o.geometry, o.material, matrices.length);
+      const m = new THREE.Matrix4();
+      matrices.forEach((mt, i) => im.setMatrixAt(i, m.multiplyMatrices(mt, o.matrixWorld)));
+      im.castShadow = shadow; im.receiveShadow = true;
+      im.computeBoundingSphere();
+      scene.add(im); out.push(im);
+    });
+    return out;
+  });
+}
+/** Lit window: warm room light with curtains half drawn. */
+export function curtainTexture() {
+  return canvasTex(128, 256, (g, w, h) => {
+    const bg = g.createRadialGradient(w / 2, h * 0.45, 10, w / 2, h * 0.45, h * 0.7);
+    bg.addColorStop(0, '#ffd9a0'); bg.addColorStop(0.6, '#d8924a'); bg.addColorStop(1, '#6a3a1c');
+    g.fillStyle = bg; g.fillRect(0, 0, w, h);
+    for (const [x0, x1] of [[0, w * 0.26], [w * 0.74, w]]) {
+      for (let x = x0; x < x1; x += 4) { const v = 70 + 35 * Math.sin(x * 0.9); g.fillStyle = `rgb(${v + 12},${v * 0.86},${v * 0.7})`; g.fillRect(x, 0, 4, h); }
+    }
+    g.fillStyle = 'rgba(40,20,10,.55)'; g.fillRect(0, 0, w, h * 0.06); // pelmet
+  }, { repeat: [1, 1] });
+}
+
 // ---- Geometry helpers -------------------------------------------------------------------------
 /** A box whose texture coordinates are in metres / tile (so brick looks the same size everywhere). */
 function box(w, h, d, x, y, z, tile = 3) {
@@ -178,7 +216,9 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
   const pot = new THREE.MeshStandardMaterial({ color: 0x8a4a32, roughness: 0.9 });
   const frameMat = new THREE.MeshStandardMaterial({ color: 0xe9e6dc, roughness: 0.6 });
   const glassDark = new THREE.MeshStandardMaterial({ color: 0x0d1117, roughness: 0.05, metalness: 0.8 });
-  const glassLit = new THREE.MeshStandardMaterial({ color: 0x2b2116, roughness: 0.2, metalness: 0.2, emissive: 0xffb15c, emissiveIntensity: 1 });
+  const glassLit = new THREE.MeshStandardMaterial({ color: 0x2b2116, roughness: 0.2, metalness: 0.2, emissive: 0xffe0b8, emissiveMap: curtainTexture(), emissiveIntensity: 1.1 });
+  const trimMat = new THREE.MeshStandardMaterial({ color: 0xbdb6a8, roughness: 0.65 });   // painted stucco trim
+  const brass = new THREE.MeshStandardMaterial({ color: 0xb8913a, roughness: 0.3, metalness: 1 });
   const doorMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.35, metalness: 0.1 });
 
   // ---- Ground: road, pavements, kerbs ------------------------------------------------------------
@@ -222,13 +262,24 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
 
   // ---- Terraced houses ---------------------------------------------------------------------------
   const r = rng(1987);
-  const windows = { dark: [], lit: [], frame: [], sill: [] };
+  const windows = { dark: [], lit: [], frame: [], sill: [], trim: [] };
+  const fronts = []; // [x0, x1, zFront, dir, doorX] for railings
   const doors = [];
   const doorColors = [0x111214, 0x1b2a44, 0x4a1418, 0x173226, 0x111214, 0x2b2b2b];
   const addWindow = (x, y, zFace, dir, w = 1.1, h = 1.8) => {
-    windows.frame.push([x, y, zFace + dir * 0.03, w + 0.22, h + 0.22, 0.06]);
-    (r() < (y < 3 ? 0.55 : 0.4) ? windows.lit : windows.dark).push([x, y, zFace + dir * 0.065, w, h, 0.02]);
-    windows.sill.push([x, y - h / 2 - 0.12, zFace + dir * 0.09, w + 0.3, 0.1, 0.2]);
+    // A Georgian sash window: the glass sits back behind a stucco surround, under a stone lintel,
+    // with a white sash frame and glazing bars (six panes over six).
+    const zf = (o) => zFace + dir * o;
+    const T = 0.15, D = 0.17;
+    windows.trim.push([x - w / 2 - T / 2, y, zf(D / 2), T, h + 2 * T, D], [x + w / 2 + T / 2, y, zf(D / 2), T, h + 2 * T, D], [x, y + h / 2 + T / 2, zf(D / 2), w + 2 * T, T, D]);
+    windows.trim.push([x, y + h / 2 + T + 0.12, zf(0.12), w + 2 * T + 0.24, 0.24, 0.24]);
+    (r() < (y < 3 ? 0.55 : 0.4) ? windows.lit : windows.dark).push([x, y, zf(0.02), w, h, 0.02]);
+    const S = 0.06, zs = zf(0.055);
+    windows.frame.push([x - w / 2 + S / 2, y, zs, S, h, 0.05], [x + w / 2 - S / 2, y, zs, S, h, 0.05], [x, y + h / 2 - S / 2, zs, w, S, 0.05], [x, y - h / 2 + S / 2, zs, w, S, 0.05]);
+    windows.frame.push([x, y, zf(0.065), w, 0.075, 0.07]);                                  // meeting rail
+    windows.frame.push([x - w / 6, y, zs, 0.03, h, 0.035], [x + w / 6, y, zs, 0.03, h, 0.035]);   // glazing bars
+    windows.frame.push([x, y + h / 4, zs, w, 0.03, 0.035], [x, y - h / 4, zs, w, 0.03, 0.035]);
+    windows.sill.push([x, y - h / 2 - 0.07, zf(0.13), w + 0.42, 0.12, 0.26]);
   };
   /** One terraced house: front at zFront, facing dir (+1 = +Z), from x0 to x1. */
   const building = (x0, x1, zFront, dir, opts = {}) => {
@@ -259,6 +310,7 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
       const doorLeft = r() < 0.5;
       const dx = doorLeft ? x0 + 1.1 : x1 - 1.1;
       doors.push([dx, zFront, dir, doorColors[Math.floor(r() * doorColors.length)]]);
+      fronts.push([x0, x1, zFront, dir, dx]);
       const span = doorLeft ? [x0 + 2.2, x1] : [x0, x1 - 2.2];
       const m = Math.max(1, Math.floor((span[1] - span[0]) / 2.4));
       for (let i = 0; i < m; i++) addWindow(span[0] + ((span[1] - span[0]) / m) * (i + 0.5), 1.75, zFront, dir, 1.2, 2.0);
@@ -299,13 +351,57 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
     return im;
   };
   const unitBox = () => new THREE.BoxGeometry(1, 1, 1);
-  for (const [k, mat] of [['frame', frameMat], ['dark', glassDark], ['lit', glassLit], ['sill', stone]]) {
+  for (const [k, mat] of [['frame', frameMat], ['dark', glassDark], ['lit', glassLit], ['sill', trimMat], ['trim', trimMat]]) {
     inst(unitBox, mat, windows[k], ([x, y, z, w, h, d], p, q, s) => { p.set(x, y, z); q.identity(); s.set(w, h, d); });
   }
   const doorIm = inst(unitBox, doorMat, doors, ([x, z, dir], p, q, s) => { p.set(x, PAVE + 1.25, z + dir * 0.05); q.identity(); s.set(1.05, 2.3, 0.08); });
   if (doorIm) { doors.forEach((d, i) => doorIm.setColorAt(i, new THREE.Color(d[3]))); doorIm.instanceColor.needsUpdate = true; }
   inst(unitBox, glassLit, doors, ([x, z, dir], p, q, s) => { p.set(x, PAVE + 2.65, z + dir * 0.06); q.identity(); s.set(1.0, 0.4, 0.02); }); // fanlights
   inst(unitBox, stone, doors, ([x, z, dir], p, q, s) => { p.set(x, PAVE + 0.09, z + dir * 0.3); q.identity(); s.set(1.6, 0.18, 0.55); }); // door steps
+  // Four raised panels on each door (in the door's own colour), a brass knob and letterbox.
+  const panels = [];
+  for (const d of doors) for (const [ox, oy] of [[-0.24, 0.62], [0.24, 0.62], [-0.24, 1.62], [0.24, 1.62]]) panels.push([d[0] + ox, d[1], d[2], d[3], oy]);
+  const panelIm = inst(unitBox, doorMat, panels, ([x, z, dir, , oy], p, q, s) => { p.set(x, PAVE + oy, z + dir * 0.1); q.identity(); s.set(0.34, oy < 1 ? 0.8 : 0.9, 0.03); });
+  if (panelIm) { panels.forEach((d, i) => panelIm.setColorAt(i, new THREE.Color(d[3]).multiplyScalar(1.25))); panelIm.instanceColor.needsUpdate = true; }
+  inst(() => new THREE.SphereGeometry(0.05, 10, 8), brass, doors, ([x, z, dir], p, q, s) => { p.set(x, PAVE + 1.15, z + dir * 0.13); q.identity(); s.set(1, 1, 1); });
+  inst(unitBox, brass, doors, ([x, z, dir], p, q, s) => { p.set(x, PAVE + 1.0, z + dir * 0.1); q.identity(); s.set(0.3, 0.07, 0.03); });
+  // Stucco pilasters either side of the door and a cornice above the fanlight.
+  const pil = [];
+  for (const [x, z, dir] of doors) pil.push([x - 0.68, z, dir, 0.24, 2.95], [x + 0.68, z, dir, 0.24, 2.95]);
+  inst(unitBox, trimMat, pil, ([x, z, dir, w, h], p, q, s) => { p.set(x, PAVE + h / 2, z + dir * 0.1); q.identity(); s.set(w, h, 0.2); });
+  inst(unitBox, trimMat, doors, ([x, z, dir], p, q, s) => { p.set(x, PAVE + 3.08, z + dir * 0.16); q.identity(); s.set(1.75, 0.3, 0.32); });
+
+  // ---- Black iron railings with spear tops along the house fronts (gap at each front door) -------
+  {
+    const bars = [], spans = [];
+    for (const [x0, x1, zFront, dir, dx] of fronts) {
+      const z = zFront + dir * 1.35;
+      for (const [a, b] of [[x0 + 0.05, dx - 0.75], [dx + 0.75, x1 - 0.05]]) {
+        if (b - a < 0.3) continue;
+        spans.push([a, b, z]);
+        for (let x = a + 0.06; x < b; x += 0.13) bars.push([x, z]);
+      }
+      // The railings turn back to the house wall beside the door path.
+      for (const sx of [dx - 0.75, dx + 0.75]) {
+        spans.push([sx, sx, z, zFront]);
+        for (let t = 0.13; t < 1.3; t += 0.13) bars.push([sx, z - dir * t]);
+      }
+    }
+    const H_R = 1.05;
+    inst(() => new THREE.CylinderGeometry(0.011, 0.011, H_R, 5), iron, bars, ([x, z], p, q, s) => { p.set(x, PAVE + H_R / 2, z); q.identity(); s.set(1, 1, 1); });
+    inst(() => new THREE.ConeGeometry(0.03, 0.12, 4), iron, bars, ([x, z], p, q, s) => { p.set(x, PAVE + H_R + 0.05, z); q.identity(); s.set(1, 1, 1); });
+    for (const [a, b, z, zf] of spans) {
+      if (zf === undefined) {
+        for (const y of [0.12, H_R - 0.08]) add(iron, box(b - a, 0.03, 0.03, (a + b) / 2, PAVE + y, z));
+        colliders.push([a, z - 0.06, b, z + 0.06]);
+      } else {
+        const z0 = Math.min(z, zf), z1 = Math.max(z, zf);
+        for (const y of [0.12, H_R - 0.08]) add(iron, box(0.03, 0.03, z1 - z0, a, PAVE + y, (z0 + z1) / 2));
+        add(iron, box(0.07, H_R + 0.25, 0.07, a, PAVE + (H_R + 0.25) / 2, z)); // gate post
+        colliders.push([a - 0.05, z0, a + 0.05, z1]);
+      }
+    }
+  }
 
   // ---- Street lamps ----------------------------------------------------------------------------
   const lamps = [];
@@ -314,12 +410,30 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
     lamps.push([x + 7, KERB_F + 0.45]);
   }
   for (let z = NEAR_FRONT + 2; z < FAR_FRONT; z += 6.5) lamps.push([X_RIVER - 0.6, z]); // Embankment lamps
-  const LAMP_Y = 4.05;
-  inst(() => new THREE.CylinderGeometry(0.07, 0.09, 3.7, 8), iron, lamps, ([x, z], p, q, s) => { p.set(x, PAVE + 1.95, z); q.identity(); s.set(1, 1, 1); });
-  inst(() => new THREE.CylinderGeometry(0.15, 0.2, 0.55, 8), iron, lamps, ([x, z], p, q, s) => { p.set(x, PAVE + 0.27, z); q.identity(); s.set(1, 1, 1); });
-  inst(() => new THREE.ConeGeometry(0.36, 0.3, 4), iron, lamps, ([x, z], p, q, s) => { p.set(x, LAMP_Y + 0.45, z); q.setFromEuler(new THREE.Euler(0, Math.PI / 4, 0)); s.set(1, 1, 1); });
+  const LAMP_S = 1.1, LAMP_Y = PAVE + 3.264 * LAMP_S; // the bulb of the real model
+  const simpleLamp = [
+    inst(() => new THREE.CylinderGeometry(0.07, 0.09, 3.4, 8), iron, lamps, ([x, z], p, q, s) => { p.set(x, PAVE + 1.7, z); q.identity(); s.set(1, 1, 1); }),
+    inst(() => new THREE.CylinderGeometry(0.15, 0.2, 0.55, 8), iron, lamps, ([x, z], p, q, s) => { p.set(x, PAVE + 0.27, z); q.identity(); s.set(1, 1, 1); }),
+    inst(() => new THREE.ConeGeometry(0.36, 0.3, 4), iron, lamps, ([x, z], p, q, s) => { p.set(x, LAMP_Y + 0.4, z); q.setFromEuler(new THREE.Euler(0, Math.PI / 4, 0)); s.set(1, 1, 1); }),
+  ];
   const lanternMat = new THREE.MeshStandardMaterial({ color: 0x3a2a18, emissive: 0xffc070, emissiveIntensity: 2.5, roughness: 0.3 });
-  inst(() => new THREE.BoxGeometry(0.4, 0.55, 0.4), lanternMat, lamps, ([x, z], p, q, s) => { p.set(x, LAMP_Y, z); q.identity(); s.set(1, 1, 1); });
+  simpleLamp.push(inst(() => new THREE.BoxGeometry(0.4, 0.5, 0.4), lanternMat, lamps, ([x, z], p, q, s) => { p.set(x, LAMP_Y, z); q.identity(); s.set(1, 1, 1); }));
+  // Glowing bulbs and glass on the real lamps.
+  const glow = (mat) => {
+    if (/bulb/.test(mat.name)) { mat.emissive = new THREE.Color(0xffc878); mat.emissiveIntensity = 4; }
+    else if (/glass/.test(mat.name)) { mat.emissive = new THREE.Color(0xffb060); mat.emissiveIntensity = 0.7; mat.depthWrite = false; }
+  };
+  {
+    const mats = lamps.map(([x, z], i) => new THREE.Matrix4().compose(new THREE.Vector3(x, PAVE, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), (i % 4) * Math.PI / 2), new THREE.Vector3(LAMP_S, LAMP_S, LAMP_S)));
+    placeModel(scene, 'street_lamp_01', mats, { shadow: !lowQ, onMaterial: glow }).then(() => { for (const m of simpleLamp) if (m) m.visible = false; }).catch(() => {});
+  }
+  // Wall lanterns beside some front doors (and yours).
+  {
+    const wl = [[H.HX + 1.25, NEAR_FRONT + 0.14, 1]];
+    for (const [x, z, dir] of doors) if (r() < 0.4) wl.push([x + 0.95, z + dir * 0.2, dir]);
+    const mats = wl.map(([x, z, dir]) => new THREE.Matrix4().compose(new THREE.Vector3(x, PAVE + 2.55, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), dir > 0 ? 0 : Math.PI), new THREE.Vector3(0.85, 0.85, 0.85)));
+    placeModel(scene, 'street_lamp_02', mats, { onMaterial: glow }).catch(() => {});
+  }
   for (const [x, z] of lamps) circles.push([x, z, 0.18]);
   // Pools of lamplight on the wet ground (cheap: a soft glow each), and a few real lights near you.
   const poolMat = new THREE.MeshBasicMaterial({ map: lightPoolTexture(), transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, fog: true });
@@ -328,6 +442,20 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
   const NL = { high: 6, medium: 4, low: 2 }[qName] || 3;
   const lampLights = [];
   for (let i = 0; i < NL; i++) { const l = new THREE.PointLight(0xffd2a0, 0, 18, 1.4); l.position.set(0, -50, 0); scene.add(l); lampLights.push(l); }
+
+  // ---- Parked cars, under covers for the winter ----------------------------------------------------
+  {
+    const cars = [];
+    for (const [z, dir] of [[KERB_N + 1.05, 1], [KERB_F - 1.05, -1]]) {
+      for (let x = X_WEST + 6 + r() * 6; x < X_ROAD_END - 8; x += 9 + r() * 14) {
+        if (Math.abs(x - H.HX) < 5 && dir > 0) continue; // keep the road outside your door clear
+        cars.push([x, z, dir]);
+        colliders.push([x - 2.25, z - 0.95, x + 2.25, z + 0.95]);
+      }
+    }
+    const mats = cars.map(([x, z, dir]) => new THREE.Matrix4().compose(new THREE.Vector3(x, 0, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), dir > 0 ? Math.PI / 2 : -Math.PI / 2), new THREE.Vector3(1, 1, 1)));
+    placeModel(scene, 'covered_car', mats, { shadow: !lowQ, onMaterial: (m) => { m.color.multiplyScalar(0.7); m.roughness = 0.75; } }).catch(() => {});
+  }
 
   // ---- Bare plane trees, phone box, post box, bollards, benches -----------------------------------
   const treeSpots = [];

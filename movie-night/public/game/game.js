@@ -15,7 +15,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { plantTrees } from './trees.js';
-import { buildLondon, photo } from './london.js';
+import { buildLondon, photo, curtainTexture } from './london.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 // The setting: a rainy winter night in London (true), or the green valley (false).
@@ -311,6 +311,8 @@ const wood = new THREE.MeshStandardMaterial({ map: tex('wood_diffuse.jpg', 1, tr
 const roofMat = new THREE.MeshStandardMaterial({ color: 0x4a3a36, roughness: 0.85, roughnessMap: tex('disturb.jpg', 3) });
 const trimMat = new THREE.MeshStandardMaterial({ color: 0xf6eedf, roughness: 0.6 });
 const windowMat = new THREE.MeshStandardMaterial({ color: 0x2a3a4c, roughness: 0.04, metalness: 0.7, emissive: 0xffb45c, emissiveIntensity: 0 });
+if (LONDON) { windowMat.emissive.set(0xffe0b8); windowMat.emissiveMap = curtainTexture(); }
+const frameWhite = new THREE.MeshStandardMaterial({ color: 0xe9e6dc, roughness: 0.6 });
 const house = new THREE.Group();
 const HX = 0, HZ = 0, HY = heightAt(HX, HZ);
 house.position.set(HX, HY, HZ);
@@ -352,6 +354,11 @@ if (LONDON) {
 for (const [x, z, ry] of [[-3, D / 2 + 0.16, 0], [3, D / 2 + 0.16, 0], [-W / 2 - 0.16, -1.5, Math.PI / 2], [W / 2 + 0.16, 1.5, Math.PI / 2], [-2.5, -D / 2 - 0.16, 0], [2.5, -D / 2 - 0.16, 0]]) {
   const fr = box(1.7, 1.4, 0.1, trimMat, x, 2.0, z, { shadow: false }); fr.rotation.y = ry;
   const gl = box(1.45, 1.15, 0.12, windowMat, x, 2.0, z, { shadow: false }); gl.rotation.y = ry;
+  if (LONDON && ry === 0) { // sash bars, like the windows next door
+    const zz = z + Math.sign(z) * 0.07;
+    for (const bx of [-0.24, 0.24]) box(0.03, 1.15, 0.03, frameWhite, x + bx, 2.0, zz, { shadow: false });
+    box(1.45, 0.06, 0.04, frameWhite, x, 2.0, zz, { shadow: false });
+  }
 }
 // Gable roof (in London the house becomes a terraced house with floors above instead)
 if (!LONDON) {
