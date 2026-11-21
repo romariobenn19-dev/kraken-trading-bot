@@ -185,6 +185,68 @@ export function curtainTexture() {
   }, { repeat: [1, 1] });
 }
 
+// ---- Shader additions (several can stack on one material) ---------------------------------------
+function hook(mat, key, fn) {
+  const hooks = (mat.userData.hooks ||= []);
+  hooks.push([key, fn]);
+  mat.onBeforeCompile = (sh) => { for (const [, f] of hooks) f(sh); };
+  mat.customProgramCacheKey = () => hooks.map(([k]) => k).join('+');
+  mat.needsUpdate = true;
+}
+const fxTime = { value: 0 };
+const NOISE = `
+  float hsh(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+  float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hsh(i), hsh(i + vec2(1.0, 0.0)), f.x), mix(hsh(i + vec2(0.0, 1.0)), hsh(i + vec2(1.0, 1.0)), f.x), f.y); }
+  float fbm(vec2 p) { return vn(p) * 0.5 + vn(p * 2.03) * 0.3 + vn(p * 4.1) * 0.2; }
+`;
+function worldPos(sh) {
+  sh.vertexShader = 'varying vec3 vWPos;\n' + sh.vertexShader.replace('#include <worldpos_vertex>', `#include <worldpos_vertex>
+    vec4 wp_ = vec4(transformed, 1.0);
+    #ifdef USE_INSTANCING
+      wp_ = instanceMatrix * wp_;
+    #endif
+    vWPos = (modelMatrix * wp_).xyz;`);
+  sh.fragmentShader = 'varying vec3 vWPos;\nuniform float fxTime;\n' + NOISE + sh.fragmentShader;
+  sh.uniforms.fxTime = fxTime;
+}
+/** Old London walls: rising damp at the bottom, rain streaks running down, patches of soot. */
+function grime(mat, amount = 1) {
+  hook(mat, 'grime', (sh) => {
+    worldPos(sh);
+    sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+      float hz = vWPos.x + vWPos.z;
+      float gn = fbm(vec2(hz * 0.6, vWPos.y * 0.4));
+      float damp = 1.0 - smoothstep(0.0, 0.7 + 0.9 * gn, vWPos.y - 0.12);
+      float streak = smoothstep(0.6, 0.95, vn(vec2(hz * 3.0, 0.5))) * smoothstep(0.25, 0.75, vn(vec2(hz * 3.0, vWPos.y * 0.3)));
+      float soot = smoothstep(0.5, 0.9, fbm(vec2(hz * 0.2, vWPos.y * 0.1 + 3.0)));
+      diffuseColor.rgb *= 1.0 - ${amount.toFixed(2)} * (0.5 * damp + 0.3 * streak + 0.28 * soot);`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+      roughnessFactor *= 1.0 - 0.45 * damp - 0.25 * streak;`);
+  });
+}
+/** Puddles on the road and pavement (more along the gutters), with raindrops rippling them. */
+function puddles(mat, amount = 1) {
+  hook(mat, 'puddles', (sh) => {
+    worldPos(sh);
+    sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+      vec2 pq = vWPos.xz;
+      float gutter = max(1.0 - smoothstep(0.0, 0.8, abs(pq.y - ${KERB_N.toFixed(2)})), 1.0 - smoothstep(0.0, 0.8, abs(pq.y - ${KERB_F.toFixed(2)})));
+      float puddle = smoothstep(0.6, 0.64, fbm(pq * 0.22) + 0.12 * fbm(pq * 1.4) + 0.2 * gutter - ${(0.12 * (1 - amount)).toFixed(2)});
+      diffuseColor.rgb *= 1.0 - 0.5 * puddle;`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+      roughnessFactor = mix(roughnessFactor, 0.03, puddle);`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+      {
+        vec2 cq = pq * 1.6; vec2 cell = floor(cq); vec2 fq = fract(cq) - 0.5 - (vec2(hsh(cell + 3.1), hsh(cell + 7.7)) - 0.5) * 0.5;
+        float ph = fract(fxTime * 0.8 + hsh(cell)); float rr = length(fq);
+        float ring = sin((rr - ph * 0.45) * 70.0) * (1.0 - smoothstep(0.0, 0.05, abs(rr - ph * 0.45))) * (1.0 - ph);
+        vec3 flat_ = normalize(mix(normal, nonPerturbedNormal, puddle));
+        normal = normalize(flat_ + (viewMatrix * vec4(fq.x, 0.0, fq.y, 0.0)).xyz * ring * 0.6 * puddle);
+      }`);
+  });
+}
+
 // ---- Light texture layout -----------------------------------------------------------------------
 // Every face of the street gets its own patch of one 2048 x 2048 texture (a second set of texture
 // coordinates, uv1), sized by how much it's seen: house fronts and the ground get the most detail,
@@ -330,6 +392,9 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
   const paving = pavingTextures();
   const pavingMat = new THREE.MeshStandardMaterial({ map: paving.map, roughnessMap: paving.rough, roughness: 0.9, color: 0xc8c8c8 });
   photo(pavingMat, 'precast_stone_paving', 2.24, { rough: 0.55 }); // London flagstones, wet
+  puddles(pavingMat, 0.6); puddles(roadMat, 1);
+  for (const m of bricks) grime(m, 1);
+  grime(stucco, 0.8); grime(stone, 0.7); grime(trimMat, 0.75);
   const pave = (x0, x1, z0, z1) => {
     const g = new THREE.BoxGeometry(x1 - x0, PAVE, z1 - z0, Math.ceil((x1 - x0) / 10), 1, Math.ceil((z1 - z0) / 10));
     const uv = g.attributes.uv;
@@ -548,6 +613,76 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
     placeModel(scene, 'covered_car', mats, { shadow: !lowQ, onMaterial: (m) => { m.color.multiplyScalar(0.7); m.roughness = 0.75; } }).catch(() => {});
   }
 
+  // ---- Misty beams of lamplight falling through the rain -----------------------------------------
+  const shaftMat = new THREE.ShaderMaterial({
+    uniforms: { opacity: { value: 0.1 }, color: { value: new THREE.Color(0xffd6a0) } },
+    vertexShader: `varying vec3 vN; varying vec3 vV; varying float vY;
+      void main() { vN = normalize(normalMatrix * normal); vec4 mv = modelViewMatrix * vec4(position, 1.0); vV = -mv.xyz; vY = uv.y; gl_Position = projectionMatrix * mv; }`,
+    fragmentShader: `uniform float opacity; uniform vec3 color; varying vec3 vN; varying vec3 vV; varying float vY;
+      void main() { float edge = pow(abs(dot(normalize(vN), normalize(vV))), 2.5); float a = edge * (0.25 + 0.75 * vY * vY) * opacity;
+        gl_FragColor = vec4(color * a, a); }`,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+  });
+  {
+    const h = LAMP_Y - 0.15 - PAVE;
+    const sg = new THREE.CylinderGeometry(0.14, 1.7, h, 24, 1, true); sg.translate(0, h / 2 + PAVE, 0);
+    for (const [x, z] of lamps) { const m = new THREE.Mesh(sg, shaftMat); m.position.set(x, 0, z); m.renderOrder = 3; scene.add(m); see.push(m); }
+  }
+
+  // ---- Street clutter: bins, bin bags, telecom cabinets, crates, litter, a pub A-board, roadworks --
+  {
+    const M = (x, y, z, ry = 0, sc = 1, rx = 0) => new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, 0, 'YXZ')), new THREE.Vector3(sc, sc, sc));
+    const cr = rng(2024);
+    const put = { bins: [], bags: [], cab: [], cab2: [], crates: [], boxes: [], pcrates: [], cans: [], plants: [], tyres: [], barriers: [], board: [] };
+    for (const [x0, x1, zFront, dir, dx] of fronts) {
+      const zr = zFront + dir * 1.62;             // just inside the pavement, against the railings
+      const face = dir > 0 ? 0 : Math.PI;
+      const side = dx - x0 > x1 - dx ? -1 : 1;    // the longer stretch of railing beside the door
+      const bx = dx + side * 1.9;
+      if (cr() < 0.4 && bx > x0 + 1 && bx < x1 - 1) {
+        put.bins.push(M(bx, PAVE, zr + dir * 0.05, face));
+        colliders.push([bx - 1, zr - 0.35, bx + 1, zr + 0.35]);
+        const nb = 1 + Math.floor(cr() * 3);
+        for (let k = 0; k < nb; k++) put.bags.push(M(bx + side * (1.2 + k * 0.45), PAVE, zr + dir * (0.05 + cr() * 0.25), cr() * 6.28, 0.9 + cr() * 0.35));
+      } else if (cr() < 0.25) {
+        put.bags.push(M(bx, PAVE, zr, cr() * 6.28, 1.1), M(bx + 0.45, PAVE, zr + dir * 0.2, cr() * 6.28, 0.95));
+      }
+      if (cr() < 0.3) put.plants.push(M(dx - side * 0.98, PAVE + 0.18, zFront + dir * 0.42, cr() * 6.28, 0.7));
+    }
+    // Green telecom cabinets every so often along the kerb side of the pavement.
+    for (let x = X_WEST + 22; x < X_ROAD_END - 10; x += 31 + cr() * 18) {
+      if (Math.abs(x - H.HX) < 6) continue;
+      const near = cr() < 0.5, z = near ? KERB_N - 0.55 : KERB_F + 0.55;
+      (cr() < 0.5 ? put.cab : put.cab2).push(M(x, PAVE, z, near ? Math.PI : 0));
+      colliders.push([x - 0.5, z - 0.25, x + 0.5, z + 0.25]);
+    }
+    // A corner shop's leftovers: crates and boxes by the far kerb, and a pub A-board.
+    for (const sx of [H.HX - 23, H.HX + 31]) {
+      const z = FAR_FRONT - 1.8;
+      put.crates.push(M(sx, PAVE, z, 0.1), M(sx, PAVE + 0.41, z, -0.15));
+      put.pcrates.push(M(sx + 0.9, PAVE, z + 0.1, 0.4), M(sx + 0.9, PAVE + 0.3, z + 0.05, 0.1));
+      put.boxes.push(M(sx - 0.9, PAVE, z, 0.6), M(sx - 1.3, PAVE, z - 0.2, 1.4, 0.85), M(sx - 1.05, PAVE + 0.5, z - 0.05, 0.2, 0.8));
+      colliders.push([sx - 1.6, z - 0.45, sx + 1.3, z + 0.45]);
+    }
+    put.board.push(M(H.HX - 14, PAVE, FAR_FRONT - 3.3, 0.3));
+    circles.push([H.HX - 14, FAR_FRONT - 3.3, 0.5]);
+    // Litter in the gutters: rusty cans on their sides.
+    for (let i = 0; i < 26; i++) {
+      const near = i % 2 === 0, z = near ? KERB_N + 0.15 + cr() * 0.25 : KERB_F - 0.15 - cr() * 0.25;
+      put.cans.push(M(X_WEST + 6 + cr() * (X_ROAD_END - X_WEST - 12), 0.062, z, cr() * 6.28, 1, Math.PI / 2));
+    }
+    // Roadworks at the west end: concrete barriers across half the road, an old tyre.
+    for (let k = 0; k < 3; k++) put.barriers.push(M(X_WEST + 10, 0, KERB_N + 0.9 + k * 1.6, Math.PI / 2));
+    colliders.push([X_WEST + 9.6, KERB_N + 0.1, X_WEST + 10.4, KERB_N + 5]);
+    put.tyres.push(M(X_WEST + 11.2, 0.08, KERB_N + 2.0, 0.3, 1, Math.PI / 2 * 0), M(X_WEST + 11.3, 0.25, KERB_N + 2.1, 1.1));
+    const sh = !lowQ;
+    const go = (id, list, opts = {}) => { if (list.length) placeModel(scene, id, list, { shadow: sh, ...opts }).catch(() => {}); };
+    go('metal_trash_can', put.bins); go('trashbag', put.bags); go('utility_box_01', put.cab); go('utility_box_02', put.cab2);
+    go('wooden_crate_01', put.crates); go('cardboard_box_01', put.boxes); go('plastic_crate_01', put.pcrates);
+    go('can_rusted', put.cans, { shadow: false }); go('potted_plant_02', put.plants); go('old_tyre', put.tyres);
+    go('concrete_road_barrier', put.barriers); go('standing_chalkboard_01', put.board);
+  }
+
   // ---- Bare plane trees, phone box, post box, bollards, benches -----------------------------------
   const treeSpots = [];
   for (let x = X_WEST + 15; x < X_ROAD_END - 4; x += 17) {
@@ -655,14 +790,12 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
     for (const m of statics) {
       const mat = m.material;
       mat.lightMap = day; mat.lightMapIntensity = 1;
-      mat.onBeforeCompile = (sh) => {
+      hook(mat, 'baked', (sh) => {
         sh.uniforms.lmNight = { value: night }; sh.uniforms.lmMix = lmMix; sh.uniforms.lmDayI = lmDayI; sh.uniforms.lmNightI = lmNightI;
         sh.fragmentShader = 'uniform sampler2D lmNight; uniform float lmMix, lmDayI, lmNightI;\n' + sh.fragmentShader
           .replace('#include <lights_fragment_begin>', noHemi)
           .replace('#include <lights_fragment_maps>', maps);
-      };
-      mat.customProgramCacheKey = () => 'baked';
-      mat.needsUpdate = true;
+      });
     }
     baked.on = true;
   }).catch(() => { /* lit live */ });
@@ -776,6 +909,8 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
     rainMat.uniforms.time.value = t;
     rainMat.uniforms.center.value.copy(camPos);
     splashMat.uniforms.time.value = t;
+    fxTime.value = t;
+    shaftMat.uniforms.opacity.value = 0.24 * night;
     splashMat.uniforms.center.value.set(player.x, 0, player.z);
     haloMat.opacity = 0.08 + 0.42 * night;
     lmMix.value = Math.min(1, Math.max(0, (night - 0.15) / 0.7));
@@ -810,7 +945,7 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
     if (x >= X_ROAD_END) return PAVE;
     return 0;
   }
-  const lanes = [{ z: NEAR_FRONT + 2.35, x0: X_WEST + 4, x1: X_ROAD_END - 4 }, { z: FAR_FRONT - 2.35, x0: X_WEST + 4, x1: X_ROAD_END - 4 }];
+  const lanes = [{ z: NEAR_FRONT + 2.5, x0: X_WEST + 4, x1: X_ROAD_END - 4 }, { z: FAR_FRONT - 2.15, x0: X_WEST + 4, x1: X_ROAD_END - 4 }]; // (clear of bins and the phone box)
   return {
     lanes, see, statics, baked, lmMix, lmDayI, lmNightI,
     bakeInfo: { hash: lm.hash, density: lm.density, lamps: lamps.map(([x, z]) => [x, LAMP_Y, z]), lanterns: lanterns.map(([x, z, dir]) => [x, PAVE + 2.55 + 0.45, z + dir * 0.55]), lit: windows.lit },

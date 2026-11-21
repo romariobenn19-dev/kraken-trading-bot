@@ -137,6 +137,24 @@ const GAME_ASSETS = {
     for (const k of ['diff', 'nor_gl', 'arm']) GAME_ASSETS[`${dir}/textures/${id}_${k}_1k.jpg`] = `${PHM}/jpg/1k/${id}/${id}_${k}_1k.jpg`;
   }
 }
+// More Poly Haven models (street clutter): their file lists are looked up from Poly Haven itself
+// the first time, so any of these can be fetched without listing every texture here.
+const PH_MODELS = new Set(['metal_trash_can', 'trashbag', 'cardboard_box_01', 'wooden_crate_01', 'plastic_crate_01',
+  'utility_box_01', 'utility_box_02', 'standing_chalkboard_01', 'old_tyre', 'concrete_road_barrier', 'can_rusted',
+  'potted_plant_02', 'planter_box_01']);
+const phFileLists = new Map();
+async function phModelUrl(name) {
+  const m = /^ph_models\/([a-z0-9_]+)\/([A-Za-z0-9_./-]+)$/.exec(name);
+  if (!m || !PH_MODELS.has(m[1]) || m[2].split('/').includes('..')) return null;
+  const [, id, rel] = m;
+  if (!phFileLists.has(id)) {
+    phFileLists.set(id, fetch(`https://api.polyhaven.com/files/${id}`).then((r) => (r.ok ? r.json() : Promise.reject(new Error(`${r.status}`)))));
+    phFileLists.get(id).catch(() => phFileLists.delete(id));
+  }
+  const g = (await phFileLists.get(id)).gltf['1k'].gltf;
+  if (rel === `${id}_1k.gltf`) return g.url;
+  return (g.include && g.include[rel] && g.include[rel].url) || null;
+}
 // Photographed materials for London (Poly Haven, CC0): colour, surface detail (normal) and
 // ambient-occlusion / roughness / metal packed in one image, 1k each.
 for (const id of ['yellow_brick', 'red_brick_03', 'brick_wall_02', 'precast_stone_paving', 'asphalt_02', 'granite_tile', 'roof_slates_03', 'white_stucco']) {
@@ -209,12 +227,12 @@ function listMixamo() {
   });
 }
 const gameDownloads = new Map();
-function gameAsset(name) {
+function gameAsset(name, url) {
   const file = path.join(GAME_ASSETS_DIR, name);
   if (fs.existsSync(file)) return Promise.resolve(file);
   if (!gameDownloads.has(name)) {
     gameDownloads.set(name, (async () => {
-      const r = await fetch(GAME_ASSETS[name]);
+      const r = await fetch(url || GAME_ASSETS[name]);
       if (!r.ok) throw new Error(`${r.status}`);
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(`${file}.part`, Buffer.from(await r.arrayBuffer()));
@@ -412,7 +430,18 @@ const server = http.createServer((req, res) => {
   }
   if (pathname.startsWith('/game-assets/')) {
     const name = decodeURIComponent(pathname.slice('/game-assets/'.length));
-    if (!Object.prototype.hasOwnProperty.call(GAME_ASSETS, name)) { res.writeHead(404); res.end(); return; }
+    if (!Object.prototype.hasOwnProperty.call(GAME_ASSETS, name)) {
+      if (name.startsWith('ph_models/')) {
+        const have = path.join(GAME_ASSETS_DIR, name);
+        if (/^ph_models\/[a-z0-9_]+\/[A-Za-z0-9_./-]+$/.test(name) && !name.includes('..') && fs.existsSync(have)) { sendFile(req, res, have, 'private, max-age=31536000, immutable'); return; }
+        phModelUrl(name).then((url) => {
+          if (!url) { res.writeHead(404); res.end(); return null; }
+          return gameAsset(name, url).then((file) => sendFile(req, res, file, 'private, max-age=31536000, immutable'));
+        }).catch(() => { if (!res.headersSent) { res.writeHead(502, { 'Content-Type': 'text/plain' }); res.end('Could not download this game file. Is the laptop online?'); } });
+        return;
+      }
+      res.writeHead(404); res.end(); return;
+    }
     gameAsset(name).then((file) => sendFile(req, res, file, 'private, max-age=31536000, immutable'))
       .catch(() => { res.writeHead(502, { 'Content-Type': 'text/plain' }); res.end('Could not download this game file. Is the laptop online?'); });
     return;
