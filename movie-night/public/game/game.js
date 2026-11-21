@@ -103,7 +103,7 @@ const NoirShader = {
       float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));
       float s = (mx - mn) / (mx + 1e-4);
       float lamp = clamp((c.r - c.b) * 2.0, 0.0, 1.0) * smoothstep(0.78, 1.0, mx);  // only the brightest warm light (lamps, windows)
-      float red = smoothstep(0.45, 0.7, s) * step(c.g * 2.4, c.r) * smoothstep(0.2, 0.32, mx); // the phone box, the post box, lipstick
+      float red = smoothstep(0.45, 0.7, s) * step(c.g * 4.0, c.r) * step(c.b * 4.0, c.r) * smoothstep(0.25, 0.4, mx); // the phone box, the post box, lipstick
       vec3 g = mix(vec3(l), c, clamp(sat + max(lamp * 0.7, red * 0.9), 0.0, 1.0));
       g *= mix(vec3(0.86, 0.92, 1.06), vec3(1.0), smoothstep(0.0, 0.55, l)); // cool shadows
       g = (g - 0.5) * contrast + 0.5;
