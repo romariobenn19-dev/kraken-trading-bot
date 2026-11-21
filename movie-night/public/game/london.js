@@ -148,6 +148,44 @@ export function photo(mat, id, sizeM, { normal = 1, rough = 1, ao = 1 } = {}) {
   return mat;
 }
 
+// ---- Shop signs and lit shop windows ------------------------------------------------------------
+function signTexture(text, bg, fg) {
+  return canvasTex(1024, 128, (g, w, h) => {
+    g.fillStyle = bg; g.fillRect(0, 0, w, h);
+    g.strokeStyle = fg; g.lineWidth = 5; g.strokeRect(12, 12, w - 24, h - 24);
+    g.fillStyle = fg; g.font = 'bold 66px Georgia, "Times New Roman", serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(text, w / 2, h / 2 + 4);
+  });
+}
+function shopInside(kind, seed) {
+  const r = rng(seed);
+  return canvasTex(512, 256, (g, w, h) => {
+    const bg = g.createLinearGradient(0, 0, 0, h);
+    bg.addColorStop(0, '#ffe2b0'); bg.addColorStop(1, '#8a5a30');
+    g.fillStyle = bg; g.fillRect(0, 0, w, h);
+    if (kind === 'pub') {
+      // Frosted, etched glass below; a warm bar with bottles and people's shapes above.
+      for (let i = 0; i < 9; i++) { g.fillStyle = `rgba(40,20,10,${0.35 + r() * 0.3})`; const x = r() * w, hh = 60 + r() * 50; g.beginPath(); g.ellipse(x, h * 0.55 - hh / 2, 14, 16, 0, 0, 7); g.fill(); g.fillRect(x - 20, h * 0.55 - hh / 2 + 14, 40, hh); }
+      for (let x = 10; x < w; x += 9) { g.fillStyle = `rgba(30,15,5,${0.4 + r() * 0.3})`; g.fillRect(x, 8, 5, 26 + r() * 10); }
+      g.fillStyle = 'rgba(255,236,205,0.82)'; g.fillRect(0, h * 0.55, w, h * 0.45);
+      g.strokeStyle = 'rgba(150,110,70,0.6)'; g.lineWidth = 2;
+      for (let x = 0; x < w; x += 64) { g.beginPath(); g.arc(x + 32, h * 0.78, 22, 0, 7); g.stroke(); }
+      return;
+    }
+    // Shelves of goods.
+    for (let y = 30; y < h - 20; y += 52) {
+      g.fillStyle = '#3a2614'; g.fillRect(0, y + 40, w, 6);
+      for (let x = 4; x < w - 10;) {
+        const iw = kind === 'news' ? 22 + r() * 10 : 14 + r() * 18, ih = 18 + r() * 22;
+        const c = [[170, 60, 40], [60, 110, 60], [200, 160, 60], [70, 80, 140], [180, 180, 170]][Math.floor(r() * 5)];
+        g.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+        if (kind === 'grocer') { g.beginPath(); g.arc(x + iw / 2, y + 40 - iw / 2, iw / 2, 0, 7); g.fill(); } else g.fillRect(x, y + 40 - ih, iw, ih);
+        x += iw + 3;
+      }
+    }
+  });
+}
+
 // ---- Real 3D models (Poly Haven, CC0) ----------------------------------------------------------
 const gltfLoader = new GLTFLoader();
 const modelCache = new Map();
@@ -445,12 +483,35 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
     // Cornice & parapet
     add(stone, box(w, 0.3, 0.45, cx, height - 0.45, zFront + dir * 0.18));
     add(brickMat, box(w, 0.7, 0.3, cx, height + 0.35, zFront - dir * 0.15));
+    // A slate mansard roof behind the parapet (most houses), with dormer windows.
+    let top = height;
+    if (r() < 0.7) {
+      const rise = 2.4, back = 0.9, L = Math.hypot(rise, back), z0 = 0.35;
+      const g = box(w, L, 0.12, 0, 0, 0);
+      g.rotateX(-dir * Math.asin(back / L));
+      g.translate(cx, height + rise / 2, zFront - dir * (z0 + back / 2));
+      add(slate, g);
+      const dz = depth - z0 - back - 0.1;
+      add(slate, box(w, rise, dz, cx, height + rise / 2, zFront - dir * (z0 + back + dz / 2)));
+      const nd = Math.max(1, Math.floor(w / 2.7));
+      if (r() < 0.75) for (let i = 0; i < nd; i++) {
+        const x = x0 + (w / nd) * (i + 0.5);
+        add(slate, box(1.25, 1.55, 1.0, x, height + 0.85, zFront - dir * 1.0));
+        add(slate, box(1.45, 0.12, 1.15, x, height + 1.68, zFront - dir * 1.0));
+        addWindow(x, height + 0.85, zFront - dir * 0.5, dir, 0.72, 1.0);
+      }
+      top = height + rise;
+    }
     // Chimney stack with pots (on the party wall)
     const chx = r() < 0.5 ? x0 + 0.6 : x1 - 0.6;
-    add(brickMat, box(1.0, 1.8, 2.2, chx, height + 0.9, zFront - dir * 6));
+    add(brickMat, box(1.0, 1.8, 2.2, chx, top + 0.9, zFront - dir * 6));
     for (let k = 0; k < 3; k++) {
-      const g = new THREE.CylinderGeometry(0.11, 0.14, 0.55, 8); g.translate(chx, height + 2.05, zFront - dir * (5.4 + k * 0.6)); add(pot, g);
+      const g = new THREE.CylinderGeometry(0.11, 0.14, 0.55, 8); g.translate(chx, top + 2.05, zFront - dir * (5.4 + k * 0.6)); add(pot, g);
     }
+    // A cast-iron drainpipe down the party wall, with its hopper head under the parapet.
+    { const g = new THREE.CylinderGeometry(0.05, 0.05, height - 0.6, 6); g.translate(x0 + 0.14, (height - 0.6) / 2, zFront + dir * 0.09); add(iron, g);
+      add(iron, box(0.26, 0.3, 0.2, x0 + 0.14, height - 0.75, zFront + dir * 0.12)); }
+    if (opts.shop) { shopFront(x0, x1, zFront, dir, opts.shop); colliders.push([Math.min(x0, x1), Math.min(zFront, zBack), Math.max(x0, x1), Math.max(zFront, zBack)]); return; }
     // Windows: upper floors evenly; ground floor has the front door at one side
     const n = Math.max(2, Math.floor(w / 2.3));
     for (let f = opts.y0 ? Math.round(opts.y0 / fh) : 1; f < floors; f++) {
@@ -467,6 +528,57 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
     }
     colliders.push([Math.min(x0, x1), Math.min(zFront, zBack), Math.max(x0, x1), Math.max(zFront, zBack)]);
   };
+  // Shop fronts and the pub (on the ground floor of a terrace house).
+  const SHOPS = [
+    { x: H.HX - 12, row: -1, kind: 'pub', name: 'THE LAMPLIGHTER' },
+    { x: H.HX - 23, row: -1, kind: 'grocer', name: 'FRESH FRUIT & VEG' },
+    { x: H.HX + 31, row: -1, kind: 'news', name: 'NEWSAGENT' },
+  ];
+  const shopLights = [];
+  const paints = { pub: new THREE.MeshStandardMaterial({ color: 0x1c3326, roughness: 0.28 }), grocer: new THREE.MeshStandardMaterial({ color: 0x2a2c33, roughness: 0.32 }), news: new THREE.MeshStandardMaterial({ color: 0x3a1618, roughness: 0.32 }) };
+  function shopFront(x0, x1, zf, dir, sh) {
+    const w = x1 - x0, cx = (x0 + x1) / 2, bo = 0.16, z = (o) => zf + dir * (o + bo);
+    const paint = paints[sh.kind];
+    if (sh.kind === 'pub') add(paint, box(w, 3.6, 0.16, cx, 1.8, zf + dir * 0.08));   // painted timber front
+    add(paint, box(0.34, 3.2, 0.3, x0 + 0.22, 1.6, z(0.15)));
+    add(paint, box(0.34, 3.2, 0.3, x1 - 0.22, 1.6, z(0.15)));
+    add(paint, box(w - 0.1, 0.8, 0.4, cx, 3.45, z(0.2)));                 // fascia
+    add(stone, box(w + 0.1, 0.16, 0.55, cx, 3.93, z(0.26)));              // cornice
+    const doorW = 1.05, dX = sh.kind === 'pub' ? cx : x1 - 0.45 - doorW / 2;
+    const spans = sh.kind === 'pub' ? [[x0 + 0.45, dX - doorW / 2 - 0.15], [dX + doorW / 2 + 0.15, x1 - 0.45]] : [[x0 + 0.45, dX - doorW / 2 - 0.15]];
+    const inside = new THREE.MeshStandardMaterial({ color: 0x000000, roughness: 0.15, metalness: 0.3, emissive: 0xffffff, emissiveMap: shopInside(sh.kind, Math.round(cx * 7)), emissiveIntensity: 0.95 });
+    for (const [a, b] of spans) {
+      const ww = b - a, wx = (a + b) / 2, wy = PAVE + 0.6 + 1.2;
+      add(paint, box(ww, 0.6, 0.26, wx, PAVE + 0.3, z(0.13)));            // stall riser
+      const gl = new THREE.Mesh(new THREE.PlaneGeometry(ww, 2.4), inside); gl.position.set(wx, wy, z(0.06)); gl.rotation.y = dir > 0 ? 0 : Math.PI; scene.add(gl);
+      for (let k = 1; k < Math.round(ww / 0.9); k++) add(paint, box(0.05, 2.4, 0.06, a + (ww / Math.round(ww / 0.9)) * k, wy, z(0.09)));
+      add(paint, box(ww, 0.08, 0.08, wx, wy + 0.55, z(0.09)));
+      shopLights.push([wx, wy, z(0.06), ww, 2.4, 0.02]);
+    }
+    // The door: dark panels below, lit glass above.
+    add(paint, box(doorW, 1.1, 0.08, dX, PAVE + 0.55, z(0.05)));
+    const dg = new THREE.Mesh(new THREE.PlaneGeometry(doorW - 0.1, 1.25), inside); dg.position.set(dX, PAVE + 1.75, z(0.05)); dg.rotation.y = dir > 0 ? 0 : Math.PI; scene.add(dg);
+    add(paint, box(doorW + 0.2, 0.12, 0.1, dX, PAVE + 2.43, z(0.06)));
+    // The sign on the fascia.
+    const sg = new THREE.Mesh(new THREE.PlaneGeometry(w - 0.9, 0.6), new THREE.MeshStandardMaterial({
+      map: signTexture(sh.name, sh.kind === 'pub' ? '#16281e' : sh.kind === 'news' ? '#2e1214' : '#22242a', '#d9b45a'), roughness: 0.35, emissive: 0xffffff, emissiveIntensity: 0.12,
+    }));
+    sg.material.emissiveMap = sg.material.map;
+    sg.position.set(cx, 3.45, z(0.41)); sg.rotation.y = dir > 0 ? 0 : Math.PI; scene.add(sg);
+    if (sh.kind === 'pub') {
+      // A painted hanging sign on an iron bracket.
+      const sx = x0 + 0.25;
+      add(iron, box(0.06, 0.06, 1.4, sx, 4.6, z(0.7)));
+      add(iron, box(0.04, 0.5, 0.04, sx, 4.35, z(1.25)));
+      const hs = new THREE.Mesh(new THREE.PlaneGeometry(0.95, 1.2), new THREE.MeshStandardMaterial({ map: signTexture('◆', '#16281e', '#d9b45a'), roughness: 0.4, side: THREE.DoubleSide }));
+      hs.material.map = canvasTex(256, 320, (g, w2, h2) => {
+        g.fillStyle = '#16281e'; g.fillRect(0, 0, w2, h2); g.strokeStyle = '#d9b45a'; g.lineWidth = 8; g.strokeRect(10, 10, w2 - 20, h2 - 20);
+        g.fillStyle = '#d9b45a'; g.font = 'bold 34px Georgia, serif'; g.textAlign = 'center'; g.fillText('THE', w2 / 2, 62); g.fillText('LAMP-', w2 / 2, 250); g.fillText('LIGHTER', w2 / 2, 290);
+        g.fillStyle = '#ffcf7a'; g.beginPath(); g.moveTo(w2 / 2, 90); g.lineTo(w2 / 2 + 40, 140); g.lineTo(w2 / 2 + 28, 200); g.lineTo(w2 / 2 - 28, 200); g.lineTo(w2 / 2 - 40, 140); g.fill();
+      });
+      hs.position.set(sx, 3.95, z(1.25)); hs.rotation.y = Math.PI / 2; scene.add(hs);
+    }
+  }
   const row = (zFront, dir, skip) => {
     let x = X_WEST;
     while (x < X_ROAD_END - 3) {
@@ -475,7 +587,9 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
         if (x < skip[0] - 3) w = skip[0] - x; else { x = skip[1]; continue; }
       }
       if (x + w > X_ROAD_END - 3) w = X_ROAD_END - x;
-      building(x, x + w, zFront, dir);
+      const shop = SHOPS.find((sh) => sh.row === dir && sh.x >= x && sh.x < x + w && !sh.done);
+      if (shop) shop.done = true;
+      building(x, x + w, zFront, dir, shop ? { shop } : {});
       x += w;
     }
   };
@@ -948,7 +1062,7 @@ export function buildLondon({ scene, Q, qName, tex, colliders, circles, house: H
   const lanes = [{ z: NEAR_FRONT + 2.5, x0: X_WEST + 4, x1: X_ROAD_END - 4 }, { z: FAR_FRONT - 2.15, x0: X_WEST + 4, x1: X_ROAD_END - 4 }]; // (clear of bins and the phone box)
   return {
     lanes, see, statics, baked, lmMix, lmDayI, lmNightI,
-    bakeInfo: { hash: lm.hash, density: lm.density, lamps: lamps.map(([x, z]) => [x, LAMP_Y, z]), lanterns: lanterns.map(([x, z, dir]) => [x, PAVE + 2.55 + 0.45, z + dir * 0.55]), lit: windows.lit },
+    bakeInfo: { hash: lm.hash, density: lm.density, lamps: lamps.map(([x, z]) => [x, LAMP_Y, z]), lanterns: lanterns.map(([x, z, dir]) => [x, PAVE + 2.55 + 0.45, z + dir * 0.55]), lit: windows.lit.concat(shopLights) },
     update, groundAt, skyDome, envScene, water, setMuted, muted,
     bounds: { x0: X_WEST + 0.6, x1: X_RIVER - 0.45, z0: H.HZ - H.D / 2 + 0.4, z1: FAR_FRONT - 0.4 },
     spawn: new THREE.Vector3(H.HX + 1.5, PAVE, NEAR_FRONT + 1.6),
