@@ -276,8 +276,15 @@ function isAuthorized(req, url) {
   return isLocal(req) || safeEqual(url.searchParams.get('key'), config.key) || safeEqual(parseCookies(req.headers.cookie).mn_key, config.key);
 }
 
+/** Stream a file to the viewer, unless they've already gone (a cancelled download is normal). */
+function pipeFile(stream, res) {
+  if (res.destroyed || res.writableEnded) { stream.destroy(); return; }
+  try { pipeline(stream, res, () => {}); } catch { stream.destroy(); }
+}
+
 function sendFile(req, res, file, cacheControl) {
   fs.stat(file, (err, st) => {
+    if (res.destroyed || res.writableEnded) return; // the viewer cancelled while we looked the file up
     if (err || !st.isFile()) { res.writeHead(404); res.end('Not found'); return; }
     const type = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
     const headers = { 'Content-Type': type, 'Cache-Control': cacheControl, 'Accept-Ranges': 'bytes' };
@@ -294,12 +301,12 @@ function sendFile(req, res, file, cacheControl) {
       if (req.method === 'HEAD') return res.end();
       // pipeline() closes the file even if the viewer cancels the download halfway
       // (a plain .pipe() leaves it open, and Windows then can't replace it during an update).
-      pipeline(fs.createReadStream(file, { start, end }), res, () => {});
+      pipeFile(fs.createReadStream(file, { start, end }), res);
       return;
     }
     res.writeHead(200, { ...headers, 'Content-Length': st.size });
     if (req.method === 'HEAD') return res.end();
-    pipeline(fs.createReadStream(file), res, () => {});
+    pipeFile(fs.createReadStream(file), res);
   });
 }
 
