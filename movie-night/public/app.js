@@ -7,6 +7,58 @@
  * line's real speed; 4 parallel ones get much closer. Falls back to one request if the
  * server doesn't do ranges. Plugs into hls.js as its fragment loader.
  */
+// ---- Getting the most out of a long-distance connection ------------------------------------------
+// The player asks for one piece of the film at a time. Over a long distance most of each request is
+// spent waiting for the reply, and small pieces (360p) never get up to full speed. So while one
+// piece downloads, the next few are already on their way (pipelining), and the speed the player
+// sees is measured over all of them together.
+const PIPELINE = 3;
+const prefetched = new Map(); // url -> Promise<{ data }>
+const Meter = {
+  events: [], active: 0, last: 0,
+  start() { this.tick(0); this.active++; },
+  stop() { this.tick(0); this.active = Math.max(0, this.active - 1); },
+  /** Bytes received; time only counts while something is downloading. */
+  tick(bytes) {
+    const t = performance.now();
+    const dt = this.active > 0 && this.last ? t - this.last : 0;
+    this.last = t;
+    if (!bytes && !dt) return;
+    this.events.push([t, bytes, dt]);
+    while (this.events.length && this.events[0][0] < t - 10000) this.events.shift();
+  },
+  /** Total speed over the last ~10 s of downloading, in bits per second (0 if unknown). */
+  bps() {
+    let b = 0, ms = 0;
+    for (const [, n, dt] of this.events) { b += n; ms += dt; }
+    return ms > 300 && b > 64 * 1024 ? (b * 8000) / ms : 0;
+  },
+};
+function prefetchAfter(context) {
+  if (!hls || !context || !context.frag || typeof context.frag.sn !== 'number') return;
+  const lv = hls.levels[context.frag.level];
+  const frags = lv && lv.details && lv.details.fragments;
+  if (!frags) return;
+  const i = frags.findIndex((f) => f.sn === context.frag.sn);
+  if (i < 0) return;
+  let room = (hls.config.maxBufferLength || 120) - bufferAhead() - context.frag.duration;
+  for (let k = i + 1; k < Math.min(frags.length, i + 1 + PIPELINE); k++) {
+    room -= frags[k].duration;
+    if (room < 0) break;
+    const url = frags[k].url;
+    if (prefetched.has(url)) continue;
+    const ld = new ParallelFragmentLoader();
+    ld.isPrefetch = true;
+    const p = new Promise((ok, no) => ld.load({ url }, { loadPolicy: { maxLoadTimeMs: 120000 } }, {
+      onSuccess: (resp) => ok({ data: resp.data }), onError: (e) => no(new Error(e && e.text || 'load failed')),
+      onTimeout: () => no(new Error('timeout')), onAbort: () => no(new Error('aborted')),
+    }));
+    p.catch(() => { if (prefetched.get(url) === p) prefetched.delete(url); });
+    prefetched.set(url, p);
+  }
+  while (prefetched.size > 4 * PIPELINE) prefetched.delete(prefetched.keys().next().value);
+}
+
 class ParallelFragmentLoader {
   constructor() {
     this.controllers = [];
@@ -33,6 +85,30 @@ class ParallelFragmentLoader {
     stats.loading.start = performance.now();
     const timeout = (config && (config.loadPolicy ? config.loadPolicy.maxLoadTimeMs : config.timeout)) || 90000;
     this.timer = setTimeout(() => { this.abortAll(); callbacks.onTimeout(stats, context, null); }, timeout);
+    if (!this.isPrefetch) {
+      const pre = prefetched.get(context.url);
+      prefetchAfter(context); // keep the pipeline full
+      if (pre) {
+        prefetched.delete(context.url);
+        pre.then(({ data }) => {
+          if (stats.aborted) return;
+          clearTimeout(this.timer);
+          // Report it as if it came at the connection's real total speed (not instantly, and not
+          // at the slower speed of one of several downloads sharing the line).
+          const now = performance.now(), bytes = data.byteLength, agg = Meter.bps();
+          const ms = agg > 0 ? Math.max(1, (bytes * 8000) / agg) : Math.max(1, now - stats.loading.start);
+          stats.loading.start = now - ms; stats.loading.first = now - ms; stats.loading.end = now;
+          stats.loaded = bytes; stats.total = bytes;
+          callbacks.onSuccess({ url: context.url, data }, stats, context, null);
+        }, () => { if (!stats.aborted) this.runNow(context, callbacks); });
+        return;
+      }
+    }
+    this.runNow(context, callbacks);
+  }
+
+  runNow(context, callbacks) {
+    const stats = this.stats;
     this.run(context, callbacks).catch((err) => {
       if (stats.aborted) return;
       clearTimeout(this.timer);
@@ -44,6 +120,13 @@ class ParallelFragmentLoader {
   async part(url, start, end, onHeaders, into) {
     const ctrl = new AbortController();
     this.controllers.push(ctrl);
+    const flow = { on: false };
+    try {
+      return await this.partInner(url, start, end, onHeaders, into, ctrl, flow);
+    } finally { if (flow.on) Meter.stop(); }
+  }
+
+  async partInner(url, start, end, onHeaders, into, ctrl, flow) {
     const r = await fetch(url, { headers: { Range: `bytes=${start}-${end}` }, signal: ctrl.signal, credentials: 'same-origin' });
     if (!r.ok) { const e = new Error(`HTTP ${r.status}`); e.status = r.status; throw e; }
     const info = onHeaders(r);
@@ -58,6 +141,8 @@ class ParallelFragmentLoader {
       else info.overflow.push(value);
       pos += value.length;
       this.stats.loaded += value.length;
+      if (!flow.on) { flow.on = true; Meter.start(); } // (only time with data flowing counts)
+      Meter.tick(value.length);
     }
     return { r, pos };
   }
