@@ -1,6 +1,6 @@
 {
   "name": "movie-night",
-  "version": "2.24.1",
+  "version": "2.25.0",
   "private": true,
   "description": "Synced long-distance movie nights: the host laptop does the heavy lifting, the partner's tablet just plays.",
   "main": "server.js",
@@ -56,16 +56,7 @@
       "public/icon-192.png",
       "public/icon-512.png",
       "public/icon-maskable-512.png",
-      "public/apple-touch-icon.png",
-      "public/game/index.html",
-      "public/game/game.js",
-      "public/game/game.css",
-      "public/game/trees.js",
-      "public/game/london.js",
-      "public/game/baked/london.json",
-      "public/game/baked/london_day.png",
-      "public/game/baked/london_night.png",
-      "public/game/actions.js"
+      "public/apple-touch-icon.png"
     ]
   }
 }

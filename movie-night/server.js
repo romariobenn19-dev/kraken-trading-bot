@@ -394,6 +394,10 @@ const server = http.createServer((req, res) => {
     sendFile(req, res, file, cache);
     return;
   }
+  // Our world (the game) is switched off for now: send old links back to the movies.
+  if (pathname === '/game' || pathname.startsWith('/game/') || pathname.startsWith('/game-assets/') || pathname.startsWith('/api/game/')) {
+    res.writeHead(302, { Location: '/' }); res.end(); return;
+  }
   if (pathname.startsWith('/vendor/three/')) {
     // The 3D engine for Our world (only its build and add-ons).
     const rel = pathname.slice('/vendor/three/'.length);
@@ -446,7 +450,6 @@ const server = http.createServer((req, res) => {
       .catch(() => { res.writeHead(502, { 'Content-Type': 'text/plain' }); res.end('Could not download this game file. Is the laptop online?'); });
     return;
   }
-  if (pathname === '/game' || pathname === '/game/') { sendFile(req, res, path.join(PUBLIC, 'game', 'index.html'), 'no-cache'); return; }
   if (pathname === '/vendor/hls.min.js') {
     sendFile(req, res, path.join(ROOT, 'node_modules', 'hls.js', 'dist', 'hls.min.js'), 'private, max-age=86400');
     return;

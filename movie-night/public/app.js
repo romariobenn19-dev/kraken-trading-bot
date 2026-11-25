@@ -1624,6 +1624,13 @@ $('subsAdd').onclick = async () => {
 function tuneAbrForBuffer() {
   if (!hls || !hls.levels.length) return;
   const ahead = bufferAhead();
+  // Shaky Wi-Fi (pauses here this week, or the speed dipping below what 360p needs): load far
+  // ahead - up to 25 minutes - whenever the connection is good, so a long drop to 0.1 Mbps is
+  // covered by what's already loaded. (360p is about 4 MB a minute, so this stays small.)
+  if (!deepLoad && (isShaky() || (bwSamples.length > 5 && lowBandwidth(180000) < levelRate(0) * 1.3))) deepLoad = true;
+  hls.config.maxBufferLength = deepLoad ? 1500 : 120;
+  hls.config.maxMaxBufferLength = deepLoad ? 1800 : 300;
+  hls.config.maxBufferSize = (deepLoad ? 140 : 120) * 1000 * 1000;
   updateSmoothCap(ahead);
   // Smooth first: going sharper needs plenty of spare speed; staying put is easy.
   hls.config.abrBandWidthUpFactor = isShaky() ? 0.55 : 0.65;
@@ -1676,6 +1683,7 @@ function lowBandwidth(ms) {
  * So a connection that keeps dropping to 0.3 Mbps simply stays at 360p and keeps playing.
  */
 let deviceMaxLevel = -1;
+let deepLoad = false; // loading far ahead (see tuneAbrForBuffer)
 let smoothCap = -1;
 let smoothCapRaisedAt = 0;
 function updateSmoothCap(ahead) {
@@ -1687,8 +1695,9 @@ function updateSmoothCap(ahead) {
   for (let i = 0; i <= deviceMaxLevel; i++) if (levelRate(i) * 1.4 <= low) fit = i;
   if (smoothCap < 0) smoothCap = deviceMaxLevel; // the start: the starting-quality logic decides
   const history = bwSamples.length && bwSamples[0][0] < Date.now() - 85000;
-  if (fit < smoothCap && (history || ahead < 30)) smoothCap = fit;   // slow now: come down at once
-  else if (fit > smoothCap && history && ahead >= 60 && Date.now() - lastStallAt > 600000 && Date.now() - smoothCapRaisedAt > 120000) {
+  if (deepLoad && ahead < 300) fit = 0;                              // shaky Wi-Fi: build a 5-minute cushion at 360p first
+  if (fit < smoothCap && (history || ahead < 30 || deepLoad)) smoothCap = fit;   // slow now: come down at once
+  else if (fit > smoothCap && history && ahead >= (deepLoad ? 300 : 60) && Date.now() - lastStallAt > 600000 && Date.now() - smoothCapRaisedAt > 120000) {
     smoothCap += 1;                                                  // steady for a while: one step up
     smoothCapRaisedAt = Date.now();
   }

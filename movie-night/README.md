@@ -87,6 +87,8 @@ If Windows says *"Windows protected your PC"*, click **More info**, then **Run a
 
 ## 🎮 Our world (look test)
 
+**Switched off for now**: the game is no longer in the app (the tab is gone and old links go back to the movies). Its code is still here, so it can come back later.
+
 The first step toward your own game: tap **🎮 Our world** at the top of Movie Night. It's a rainy winter night in London, in black and white like an old noir film: wet cobbled-looking streets, Victorian terraces with your house (black front door) among them, gas-style street lamps glowing in the rain, bare plane trees, a red phone box and post box, the Thames embankment and Big Ben in the distance showing the real London time. Days are grey and overcast; 🌙 skips between day and night and 🔊 turns the rain sound on or off. You walk around together and see each other live, with your pet names over your heads.
 
 - **Laptop:** WASD or the arrow keys to walk, Shift to run, drag to look around, scroll to zoom, **G** to dance, **K** to blow a kiss.
