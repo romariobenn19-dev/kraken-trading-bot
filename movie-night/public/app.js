@@ -1805,7 +1805,8 @@ function updateSmoothCap(ahead) {
   const low = lowBandwidth(90000);
   if (!low) return;
   let fit = 0;
-  for (let i = 0; i <= deviceMaxLevel; i++) if (levelRate(i) * 1.4 <= low) fit = i;
+  // Room to spare: long-distance links wobble, so a quality needs 1.6x its rate at the connection's slowest.
+  for (let i = 0; i <= deviceMaxLevel; i++) if (levelRate(i) * 1.6 <= low) fit = i;
   if (smoothCap < 0) smoothCap = deviceMaxLevel; // the start: the starting-quality logic decides
   const history = bwSamples.length && bwSamples[0][0] < Date.now() - 85000;
   if (deepLoad && ahead < 300) fit = 0;                              // shaky Wi-Fi: build a 5-minute cushion at 360p first
@@ -1826,6 +1827,7 @@ function safeBandwidth() {
 
 function noteStall() {
   lastStallAt = Date.now();
+  deepLoad = true; // a pause on this device: from now on, build a big cushion
   if (hls && deviceMaxLevel >= 0 && hls.autoLevelEnabled) {
     smoothCap = Math.max(0, Math.min(smoothCap < 0 ? deviceMaxLevel : smoothCap, hls.currentLevel) - 1);
     hls.autoLevelCapping = smoothCap;
