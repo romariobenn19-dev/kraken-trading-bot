@@ -1120,7 +1120,8 @@ const tmdb = createTmdb({ LIBRARY, config, listMovies, onUpdated: () => broadcas
 const host = createHost({
   ROOT, LIBRARY, config, saveConfig, links, restart, savePersonal, openPhotosFolder,
   httpsStatus: () => ({ ...tsHttps }), retryHttps: () => setupHttps(),
-  tmdb, onMovieReady: (title, id) => {
+  tmdb, watching: () => !!room.movieId && !!room.wantPlay,
+  onMovieReady: (title, id) => {
     features.onNewMovie(title);
     tmdb.refresh().catch(() => {});
     // Someone asked to watch this one: open it on every screen now that it's watchable.

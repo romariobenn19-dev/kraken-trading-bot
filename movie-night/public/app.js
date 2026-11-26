@@ -474,7 +474,9 @@ async function openMovie(id) {
     hls.on(Hls.Events.ERROR, (_e, data) => {
       if (!data.fatal) return;
       // HEVC said yes but doesn't actually play here: use H.264 on this device from now on.
-      if (usingHevc && (data.details === Hls.ErrorDetails.MANIFEST_INCOMPATIBLE_CODECS_ERROR || data.type === Hls.ErrorTypes.MEDIA_ERROR)) {
+      // (Only when the browser really can't decode it - not on any hiccup.)
+      const decodeFail = video.error && (video.error.code === 3 || video.error.code === 4);
+      if (usingHevc && (data.details === Hls.ErrorDetails.MANIFEST_INCOMPATIBLE_CODECS_ERROR || (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaErrors >= 2 && decodeFail))) {
         hevcGaveUp(); return;
       }
       if (data.details === Hls.ErrorDetails.MANIFEST_INCOMPATIBLE_CODECS_ERROR) { setPlayerError('needs-hevc'); return; }
@@ -498,18 +500,21 @@ async function openMovie(id) {
 
 /** HEVC gives the same picture at ~60% of the data, so prefer it when the device decodes it in hardware. */
 /** HEVC failed for real on this device: remember it, and switch to H.264 (or ask the laptop for it). */
-let hevcFailed = store.get('mn_nohevc') === '1';
+// (Remembered for a day, then HEVC gets another chance - a one-off glitch shouldn't stick.)
+const noHevcUntil = Number(store.get('mn_nohevc_until')) || 0;
+if (store.get('mn_nohevc') === '1') store.set('mn_nohevc', ''); // older versions remembered it forever
+let hevcFailed = Date.now() < noHevcUntil;
 let usingHevc = false;
 function hevcGaveUp() {
   hevcFailed = true;
   usingHevc = false;
-  store.set('mn_nohevc', '1');
+  store.set('mn_nohevc_until', String(Date.now() + 86400000));
   if (meta && meta.avc && openId) openMovie(openId);
   else { setPlayerError('needs-hevc'); showChrome(); }
 }
 
 async function canPlayHevc() {
-  if (store.get('mn_nohevc') === '1') return false;
+  if (Date.now() < (Number(store.get('mn_nohevc_until')) || 0)) return false;
   // Can this browser decode HEVC at all? (1080p, or at least 360p on a modest laptop.) Only
   // 'supported' counts: budget laptops on battery often say "not smooth" yet play it fine, and
   // the qualities this device can handle are picked per quality later (setupQuality).

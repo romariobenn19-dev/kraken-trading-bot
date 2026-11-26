@@ -104,7 +104,7 @@ function killTree(proc) {
   else proc.kill();
 }
 
-module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendToHosts, libraryChanged, links, onMovieDeleted, restart, savePersonal, openPhotosFolder, httpsStatus, retryHttps, tmdb, onMovieReady }) {
+module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendToHosts, libraryChanged, links, onMovieDeleted, restart, savePersonal, openPhotosFolder, httpsStatus, retryHttps, tmdb, onMovieReady, watching = () => false }) {
   const FFMPEG = findTool('ffmpeg');
   const FFPROBE = findTool('ffprobe');
   const version = () => JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
@@ -153,15 +153,25 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     return job;
   }
 
+  // A film started: pause background conversions (they'd compete with it for the laptop's graphics
+  // chip, disk and upload). Carry on when it's paused or over.
+  setInterval(() => {
+    if (watching()) {
+      for (const j of runningJobs) if (!canRunNow(j) && j.proc && !j.paused) { j.paused = true; killTree(j.proc); }
+    } else runNext();
+  }, 5000).unref();
+
   function nextQueued() {
     const q = jobs.filter((j) => j.status === 'queued');
     return q.find((j) => j.priority) || q.find((j) => j.phase === 'watch') || q[0];
   }
 
+  /** Background work (backups, top-ups) waits while you're watching: the laptop's full attention goes to the film. */
+  const canRunNow = (job) => job.phase === 'watch' || job.priority || !watching();
   function runNext() {
     for (;;) {
       const job = nextQueued();
-      if (!job) return;
+      if (!job || !canRunNow(job)) return;
       // One conversion at a time, plus one extra for a "watch this now" request.
       if (runningJobs.size >= (job.priority ? MAX_PARALLEL : 1)) return;
       start(job);
@@ -216,6 +226,12 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     p.on('close', (code) => {
       job.finishedAt = Date.now();
       delete job.proc;
+      if (job.paused) { // stopped because a film started: back in the queue (finished versions are kept)
+        job.paused = false; job.status = 'queued'; job.startedAt = null; job.finishedAt = null; job.progress = null;
+        runningJobs.delete(job);
+        pushJobs(true);
+        return;
+      }
       if (job.status === 'cancelled') { /* user stopped it */ }
       else if (code === 0) job.status = 'done';
       else {
