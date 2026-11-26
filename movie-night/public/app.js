@@ -493,15 +493,21 @@ async function openMovie(id) {
 
 /** HEVC gives the same picture at ~60% of the data, so prefer it when the device decodes it in hardware. */
 async function canPlayHevc() {
-  const type = 'video/mp4; codecs="hvc1.1.6.L123.90"';
-  if (!(window.MediaSource && MediaSource.isTypeSupported(type))) return false;
-  if (!navigator.mediaCapabilities) return true;
-  try {
-    const r = await navigator.mediaCapabilities.decodingInfo({
-      type: 'media-source', video: { contentType: type, width: 1920, height: 1080, bitrate: 3_500_000, framerate: 24 },
-    });
-    return r.supported && r.smooth;
-  } catch { return true; }
+  // Can this browser decode HEVC at all? (1080p, or at least 360p on a modest laptop.) Only
+  // 'supported' counts: budget laptops on battery often say "not smooth" yet play it fine, and
+  // the qualities this device can handle are picked per quality later (setupQuality).
+  if (!window.MediaSource) return false;
+  const tries = [['hvc1.1.6.L123.90', 1920, 1080, 3_500_000], ['hvc1.1.6.L90.90', 640, 360, 500_000]];
+  for (const [codec, width, height, bitrate] of tries) {
+    const type = `video/mp4; codecs="${codec}"`;
+    if (!MediaSource.isTypeSupported(type)) continue;
+    if (!navigator.mediaCapabilities) return true;
+    try {
+      const r = await navigator.mediaCapabilities.decodingInfo({ type: 'media-source', video: { contentType: type, width, height, bitrate, framerate: 24 } });
+      if (r.supported) return true;
+    } catch { return true; }
+  }
+  return false;
 }
 
 /**
