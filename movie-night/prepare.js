@@ -384,7 +384,8 @@ async function main() {
   if (opts.hevc) for (const r of HEVC_LADDER.filter(fits)) jobs.push({ ...r, family: 'hevc' });
   if (opts.avc) for (const r of AVC_LADDER.filter(fits)) jobs.push({ ...r, family: 'avc' });
   // H.264-only movie: there's no tiny HEVC 360p to fall back on, so add an H.264 one.
-  if (opts.avc && !opts.hevc && srcW >= 700) jobs.push({ label: '360p', width: 640, kbps: 550, codec: 'avc1.64001e', family: 'avc', audio: 96 });
+  // A light H.264 360p too, for devices without HEVC on poor Wi-Fi (480p needs over 1 Mbps).
+  if (opts.avc && srcW >= 700) jobs.push({ label: '360p', width: 640, kbps: 550, codec: 'avc1.64001e', family: 'avc', audio: 96 });
   if (!jobs.length) {
     // Very small source: make a single rendition at native width.
     const w = even(Math.min(srcW, 640));

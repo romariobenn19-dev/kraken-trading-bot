@@ -293,7 +293,12 @@ function connect() {
     else if (m.t === 'welcome') onWelcome(m);
     else if (m.t === 'replaced') onReplaced();
     else if (m.t === 'jobs') renderJobs(m.jobs);
-    else if (m.t === 'library') refreshMovies().then(syncOpenMovieSubs);
+    else if (m.t === 'library') refreshMovies().then(() => {
+      syncOpenMovieSubs();
+      // Waiting for a version this device can play? Start as soon as it's there.
+      const fresh = meta && movies.find((x) => x.id === meta.id);
+      if (playerError === 'needs-hevc' && fresh && fresh.avc && openId === fresh.id) openMovie(fresh.id);
+    });
     else if (m.t === 'personal') loadPersonal();
     else if (m.t === 'restarting') { toast('Updating Movie Night… back in a few seconds'); appVersion = 'restarting'; }
     else if (typeof onFeatureMessage === 'function') onFeatureMessage(m); // together features (home.js / together.js)
@@ -1357,7 +1362,7 @@ function setPlayerError(kind) {
   const chrome = /Edg\//.test(navigator.userAgent) ? 'Microsoft Edge can\'t play this movie\'s format (HEVC) unless the "HEVC Video Extensions" app is installed. '
     : 'This browser can\'t play this movie\'s format (HEVC). ';
   $('playErrorText').textContent = kind === 'needs-hevc'
-    ? `${chrome}Open Movie Night in Google Chrome instead, or re-add the movie with "Skip H.264 backups" unticked.`
+    ? `${chrome}The laptop is making a version this device can play - it starts here by itself when it's ready (usually 5-20 minutes). Or open Movie Night in Google Chrome, which may play it now.`
     : 'Something went wrong playing this movie on this device. Try going back to Movies and opening it again.';
   box.classList.remove('hidden');
   reportStatus();

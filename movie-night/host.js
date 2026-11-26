@@ -527,7 +527,31 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     return { hevcConfirmed, cannotPlayHevc: cannot.length > 3 ? [...cannot.slice(0, 3), 'others'] : cannot };
   }
 
-  function onStatus() { /* device capabilities are recorded at hello */ }
+  /**
+   * A device can't play this movie (no HEVC in its browser, and no H.264 version yet): make the
+   * H.264 versions from the original file now, ahead of everything else. Finished qualities are
+   * kept, so this only adds what's missing. The movie starts on that device by itself when ready.
+   */
+  const avcAsked = new Set();
+  function onStatus(c) {
+    if (!c || c.error !== 'needs-hevc' || !c.movieId || avcAsked.has(c.movieId)) return;
+    const id = c.movieId;
+    avcAsked.add(id);
+    let meta, file;
+    try { meta = JSON.parse(fs.readFileSync(path.join(LIBRARY, id, 'meta.json'), 'utf8')); } catch { return; }
+    if (meta.avc) return;
+    try { file = JSON.parse(fs.readFileSync(path.join(LIBRARY, id, '.source.json'), 'utf8')).file; } catch { /* unknown */ }
+    if (!file || !fs.existsSync(file) || slugify(meta.title) !== id) {
+      console.log(`  ${c.name} can't play "${meta.title}" (HEVC) and its original file isn't there to make an H.264 version.`);
+      return;
+    }
+    if (jobs.some((j) => j.movieId === id && !j.skipAvc && (j.status === 'queued' || j.status === 'running'))) return;
+    console.log(`  ${c.name}'s browser can't play "${meta.title}" (HEVC): making an H.264 version now.`);
+    const job = enqueue({ file, title: meta.title, quick: true, skipAvc: false, phase: 'backups' });
+    job.priority = true;
+    runNext();
+    pushJobs(true);
+  }
 
   // ---- Auto-add folder ------------------------------------------------------------------
   const watcher = createWatcher({
