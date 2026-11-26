@@ -1814,10 +1814,19 @@ function updateSmoothCap(ahead) {
   for (let i = 0; i <= deviceMaxLevel; i++) if (levelRate(i) * 1.6 <= low) fit = i;
   if (smoothCap < 0) smoothCap = deviceMaxLevel; // the start: the starting-quality logic decides
   const history = bwSamples.length && bwSamples[0][0] < Date.now() - 85000;
-  if (deepLoad && ahead < 300) fit = 0;                              // shaky Wi-Fi: build a 5-minute cushion at 360p first
+  // "Plenty": even at its slowest, the connection loads this quality at least 3x faster than it plays.
+  // Then there's no risk in it, whatever happened before (a fast connection shouldn't be held back).
+  const plenty = (i) => levelRate(i) * 3 <= low;
+  let roomy = -1;
+  for (let i = 0; i <= deviceMaxLevel; i++) if (plenty(i)) roomy = i;
+  // Shaky Wi-Fi: build a 5-minute cushion first, at a quality that loads 3x faster than it plays.
+  if (deepLoad && ahead < 300) fit = Math.max(0, Math.min(fit, roomy));
   if (fit < smoothCap && (history || ahead < 30 || deepLoad)) smoothCap = fit;   // slow now: come down at once
-  else if (fit > smoothCap && history && ahead >= (deepLoad ? 300 : 60) && Date.now() - lastStallAt > 600000 && Date.now() - smoothCapRaisedAt > 120000) {
-    smoothCap += 1;                                                  // steady for a while: one step up
+  else if (fit > smoothCap && roomy > smoothCap && ahead >= 15) {
+    smoothCap = Math.min(fit, roomy);                                // plenty of speed: straight back up
+    smoothCapRaisedAt = Date.now();
+  } else if (fit > smoothCap && history && ahead >= (deepLoad ? 300 : 60) && Date.now() - lastStallAt > 600000 && Date.now() - smoothCapRaisedAt > 120000) {
+    smoothCap += 1;                                                  // borderline speed, steady for a while: one step up
     smoothCapRaisedAt = Date.now();
   }
   if (hls.autoLevelCapping !== smoothCap) hls.autoLevelCapping = Math.min(deviceMaxLevel, smoothCap);
