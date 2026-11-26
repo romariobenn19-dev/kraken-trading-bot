@@ -135,7 +135,8 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
 
   function enqueue({ file, title, denoise, skipAvc, skipHevc, quick, subtitles: subs, auto, phase = 'watch' }) {
     const job = {
-      id: nextJobId++, file, title, movieId: slugify(title), denoise: !!denoise, skipAvc: !!skipAvc, skipHevc: !!skipHevc, quick: !!quick,
+      // H.264 versions are always made now: they play everywhere (HEVC alone failed on some laptops).
+      id: nextJobId++, file, title, movieId: slugify(title), denoise: !!denoise, skipAvc: false, skipHevc: !!skipHevc, quick: !!quick,
       subtitles: subs, auto: !!auto, phase, priority: false,
       status: 'queued', progress: null, error: null, log: '', startedAt: null, finishedAt: null,
     };
@@ -628,13 +629,15 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
         if (jobs.some((j) => j.movieId === id && ['queued', 'running'].includes(j.status))) continue;
         const r = meta.renditions || [];
         const hasSafety = r.some((x) => x.height <= 400);
-        if (hasSafety && !meta.partial && !meta.converting) continue;
+        // Every movie needs H.264 (plays everywhere), including the light 360p one.
+        const hasAvc = !!meta.avc && r.some((x) => /^avc/.test(x.codec || '') && x.height <= 400);
+        if (hasSafety && hasAvc && !meta.partial && !meta.converting) continue;
         if (slugify(meta.title) !== id) continue;
         const { file } = JSON.parse(fs.readFileSync(path.join(LIBRARY, id, '.source.json'), 'utf8'));
         if (!file || !fs.existsSync(file)) continue;
         const has1080 = r.some((x) => x.height >= 1000 && x.height <= 1100);
         const quick = !r.some((x) => x.height > 1100 || (has1080 && /^720p_/.test(x.dir)));
-        enqueue({ file, title: meta.title, skipAvc: !meta.avc, skipHevc: !meta.hevc, quick, phase: 'backups' });
+        enqueue({ file, title: meta.title, skipAvc: false, skipHevc: !meta.hevc, quick, phase: 'backups' });
       } catch { /* not a movie folder, or no original file: leave it */ }
     }
   }

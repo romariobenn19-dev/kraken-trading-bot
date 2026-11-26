@@ -423,7 +423,8 @@ async function openMovie(id) {
   const base = `/library/${encodeURIComponent(mv.id)}/`;
   setPlayerError(null);
   mediaErrors = 0;
-  const useHevc = mv.hevc && await hevcSupport;
+  const useHevc = mv.hevc && !hevcFailed && await hevcSupport;
+  usingHevc = !!useHevc;
   if (!useHevc && !mv.avc) { setPlayerError('needs-hevc'); showChrome(); return; }
   if (id !== openId) return;
   const src = base + (useHevc ? mv.hevc : mv.avc || mv.hevc);
@@ -472,6 +473,10 @@ async function openMovie(id) {
     hls.on(Hls.Events.LEVEL_SWITCHED, () => updateQualityLabel());
     hls.on(Hls.Events.ERROR, (_e, data) => {
       if (!data.fatal) return;
+      // HEVC said yes but doesn't actually play here: use H.264 on this device from now on.
+      if (usingHevc && (data.details === Hls.ErrorDetails.MANIFEST_INCOMPATIBLE_CODECS_ERROR || data.type === Hls.ErrorTypes.MEDIA_ERROR)) {
+        hevcGaveUp(); return;
+      }
       if (data.details === Hls.ErrorDetails.MANIFEST_INCOMPATIBLE_CODECS_ERROR) { setPlayerError('needs-hevc'); return; }
       if (data.type === Hls.ErrorTypes.NETWORK_ERROR) setTimeout(() => hls && hls.startLoad(), 2000);
       else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
@@ -492,7 +497,19 @@ async function openMovie(id) {
 }
 
 /** HEVC gives the same picture at ~60% of the data, so prefer it when the device decodes it in hardware. */
+/** HEVC failed for real on this device: remember it, and switch to H.264 (or ask the laptop for it). */
+let hevcFailed = store.get('mn_nohevc') === '1';
+let usingHevc = false;
+function hevcGaveUp() {
+  hevcFailed = true;
+  usingHevc = false;
+  store.set('mn_nohevc', '1');
+  if (meta && meta.avc && openId) openMovie(openId);
+  else { setPlayerError('needs-hevc'); showChrome(); }
+}
+
 async function canPlayHevc() {
+  if (store.get('mn_nohevc') === '1') return false;
   // Can this browser decode HEVC at all? (1080p, or at least 360p on a modest laptop.) Only
   // 'supported' counts: budget laptops on battery often say "not smooth" yet play it fine, and
   // the qualities this device can handle are picked per quality later (setupQuality).
