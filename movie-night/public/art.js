@@ -22,6 +22,13 @@
   let uid = 0;
   const nid = (p) => `${p}${(++uid).toString(36)}`;
   /** A soft glow for the rim light (blurred, so it reads as light, not a line). */
+  /** Painted texture: fine brush grain and slightly organic edges, so shapes read as paint, not plastic. */
+  const paintDef = (id) => `<filter id="${id}" x="-5%" y="-5%" width="110%" height="110%" color-interpolation-filters="sRGB">
+    <feTurbulence type="fractalNoise" baseFrequency="0.09 0.35" numOctaves="3" seed="7" result="n"/>
+    <feDisplacementMap in="SourceGraphic" in2="n" scale="0.6" xChannelSelector="R" yChannelSelector="G" result="d"/>
+    <feColorMatrix in="n" type="matrix" values="1.4 0 0 0 -.2  1.4 0 0 0 -.2  1.4 0 0 0 -.2  0 0 0 .22 0" result="g"/>
+    <feComposite in="g" in2="d" operator="in" result="gm"/>
+    <feBlend in="d" in2="gm" mode="soft-light"/></filter>`;
   const glowDef = (id) => `<filter id="${id}" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="1.6"/></filter>`;
   const radial = (id, stops, cx = '40%', cy = '35%', r = '75%') =>
     `<radialGradient id="${id}" cx="${cx}" cy="${cy}" r="${r}">${stops.map(([o, c, a = 1]) => `<stop offset="${o}" stop-color="${c}" stop-opacity="${a}"/>`).join('')}</radialGradient>`;
@@ -142,11 +149,12 @@
   // ---- Characters (drawn in a 120 x 160 box, head centred at 60,54) -------------
   function him({ face = 'smile', body = true, outfit = C.cream, outfitDark = C.creamDark } = {}) {
     const sk = nid('sk'), hr = nid('hr'), bd = nid('bd'), rim = nid('rm'), gl = nid('gl');
-    return `<g class="him"><defs>${glowDef(gl)}
+    const pt = nid('pt');
+    return `<g class="him"><defs>${glowDef(gl)}${paintDef(pt)}
         ${radial(sk, [[0, '#a8694a'], [0.55, C.himSkin], [1, '#4e2c1d']], '38%', '30%', '80%')}
         ${linear(hr, [[0, '#3a2a24'], [1, '#120c09']])}
         ${linear(bd, [[0, '#2e1f17'], [1, '#160e0a']])}
-        ${linear(rim, [[0, '#ffb3c7', 0], [1, '#ffb3c7', 0.85]], 1, 0)}
+        ${linear(rim, [[0, '#ff8fb5', 0], [1, '#ff8fb5', 1]], 1, 0)}
       </defs>
       ${body ? outfitShape('M18 160 Q20 110 60 104 Q100 110 102 160 Z', outfit, outfitDark,
         `<path d="M60 106 V160" stroke="${outfitDark}" stroke-width="1.6"/><path d="M44 108 L60 124 L76 108" fill="none" stroke="${outfitDark}" stroke-width="1.6"/>
@@ -156,10 +164,10 @@
       <path d="M19 55 q3 4 1 8 M101 55 q-3 4 -1 8" stroke="#4e2c1d" stroke-width="1.4" fill="none" opacity=".7"/>
       <ellipse cx="60" cy="54" rx="38" ry="41" fill="url(#${sk})" stroke="#4a2a1b" stroke-width="1"/>
       <path d="M96 40 Q100 62 88 84" stroke="url(#${rim})" stroke-width="4" fill="none" stroke-linecap="round" filter="url(#${gl})"/>
-      <path d="M23 46 Q22 12 60 12 Q98 12 97 46 Q94 30 82 27 Q60 22 38 27 Q26 30 23 46 Z" fill="url(#${hr})"/>
+      <path d="M23 46 Q22 12 60 12 Q98 12 97 46 Q94 30 82 27 Q60 22 38 27 Q26 30 23 46 Z" fill="url(#${hr})" filter="url(#${pt})"/>
       <path d="M30 30 Q44 18 64 18 M38 24 Q56 15 80 20 M72 17 Q88 20 94 32" stroke="#6b5a52" stroke-width="1.6" fill="none" opacity=".55" stroke-linecap="round"/>
       <path d="M26 44 Q30 32 40 28" stroke="#c9a2ff" stroke-width="3" fill="none" opacity=".5" stroke-linecap="round" filter="url(#${gl})"/>
-      <path d="M24 56 Q24 90 60 96 Q96 90 96 56 Q92 76 80 80 Q70 84 60 84 Q50 84 40 80 Q28 76 24 56 Z" fill="url(#${bd})"/>
+      <path d="M24 56 Q24 90 60 96 Q96 90 96 56 Q92 76 80 80 Q70 84 60 84 Q50 84 40 80 Q28 76 24 56 Z" fill="url(#${bd})" filter="url(#${pt})"/>
       <path d="M45 69 Q60 63 75 69 Q68 72 60 70 Q52 72 45 69 Z" fill="url(#${bd})"/>
       <path d="M32 80 l2 4 M40 86 l1 4 M50 89 l1 4 M70 89 l-1 4 M80 86 l-1 4 M88 80 l-2 4 M46 66 l3 -1 M71 65 l3 1" stroke="#4a3a32" stroke-width="1" opacity=".6" stroke-linecap="round"/>
       <path d="M38 40 q8 -4 15 -1 M67 39 q7 -3 15 1" stroke="#140c08" stroke-width="3.6" fill="none" stroke-linecap="round"/>
@@ -178,13 +186,14 @@
     const strand = (d, light) => `<path d="${d}" stroke="${light ? '#ec9468' : C.herHairDark}" stroke-width="${light ? 1.6 : 1.3}" fill="none" opacity="${light ? 0.8 : 0.55}" stroke-linecap="round"/>`;
     const tendril = (x, y, dir, len) => `<path d="M${x} ${y} q${dir * 6} ${len * 0.3} 0 ${len * 0.55} q${-dir * 6} ${len * 0.25} 0 ${len * 0.45}" stroke="url(#${hr})" stroke-width="5" fill="none" stroke-linecap="round"/>
       <path d="M${x} ${y} q${dir * 6} ${len * 0.3} 0 ${len * 0.55}" stroke="#ec9468" stroke-width="1.2" fill="none" opacity=".7" stroke-linecap="round"/>`;
-    return `<g class="her"><defs>${glowDef(gl)}
+    const pt = nid('pt');
+    return `<g class="her"><defs>${glowDef(gl)}${paintDef(pt)}
         ${radial(sk, [[0, '#fff3ea'], [0.55, C.herSkin], [1, '#e2b29b']], '40%', '32%', '80%')}
         ${radial(hr, [[0, '#d26a42'], [0.6, C.herHair], [1, '#6a2817']], '38%', '28%', '80%')}
         ${linear(hl, [[0, '#d97a50'], [1, C.herHairDark]])}
-        ${linear(rim, [[0, '#c9a2ff', 0], [1, '#c9a2ff', 0.9]], 1, 0)}
+        ${linear(rim, [[0, '#b48aff', 0], [1, '#b48aff', 1]], 1, 0)}
       </defs>
-      <path d="${body ? wavy(60, 82, 50, 80, 17, 128, 412, 1.09) : wavy(60, 66, 50, 64, 15, 150, 390, 1.1)}" fill="url(#${hr})"/>
+      <path d="${body ? wavy(60, 82, 50, 80, 17, 128, 412, 1.09) : wavy(60, 66, 50, 64, 15, 150, 390, 1.1)}" fill="url(#${hr})" filter="url(#${pt})"/>
       ${strand('M30 30 Q14 70 22 120', true)}${strand('M90 30 Q106 70 98 120', true)}
       ${strand('M24 44 Q12 88 26 140')}${strand('M96 44 Q108 88 94 140')}
       ${strand('M40 18 Q20 40 18 76', true)}${strand('M80 18 Q100 40 102 76')}
@@ -192,12 +201,12 @@
         `<path d="M30 128 Q60 140 90 128" stroke="${outfitDark}" stroke-width="1.6" fill="none"/>
         <path d="M32 152 Q36 130 48 120" stroke="#fff" stroke-width="2" fill="none" opacity=".5"/>
         <rect x="52" y="86" width="16" height="22" rx="6" fill="${C.herSkinShade}"/><path d="M52 95 Q60 103 68 95 V108 H52 Z" fill="#c98f78" opacity=".55"/>
-        <path d="M20 104 Q14 132 22 158 L34 158 Q28 130 32 106 Z M100 104 Q106 132 98 158 L86 158 Q92 130 88 106 Z" fill="url(#${hr})"/>
+        <path d="M20 104 Q14 132 22 158 L34 158 Q28 130 32 106 Z M100 104 Q106 132 98 158 L86 158 Q92 130 88 106 Z" fill="url(#${hr})" filter="url(#${pt})"/>
         ${strand('M24 106 Q19 130 26 156', true)}${strand('M96 106 Q101 130 94 156', true)}`) : ''}
       <ellipse cx="60" cy="56" rx="35" ry="38" fill="url(#${sk})" stroke="#d9a58c" stroke-width="1"/>
       <path d="M93 46 Q97 66 86 86" stroke="url(#${rim})" stroke-width="4" fill="none" stroke-linecap="round" filter="url(#${gl})"/>
       <path d="M30 50 Q40 44 54 42" stroke="#b9715a" stroke-width="6" fill="none" opacity=".16" stroke-linecap="round"/>
-      <path d="M22 58 Q18 22 60 12 Q102 16 99 54 Q95 40 88 36 Q86 44 78 42 Q74 33 66 34 Q60 41 52 36 Q46 31 40 38 Q34 46 28 44 Q24 50 22 58 Z" fill="url(#${hl})"/>
+      <path d="M22 58 Q18 22 60 12 Q102 16 99 54 Q95 40 88 36 Q86 44 78 42 Q74 33 66 34 Q60 41 52 36 Q46 31 40 38 Q34 46 28 44 Q24 50 22 58 Z" fill="url(#${hl})" filter="url(#${pt})"/>
       ${strand('M30 40 Q42 18 66 16', true)}${strand('M58 18 Q82 18 94 36', true)}${strand('M44 36 Q54 24 72 22')}${strand('M76 26 Q86 30 90 40')}
       <path d="M102 26 Q112 50 104 76" stroke="#c9a2ff" stroke-width="4" fill="none" opacity=".6" stroke-linecap="round" filter="url(#${gl})"/>
       <path d="M38 45 q7 -4 14 -1 M68 44 q7 -3 14 1" stroke="${C.herHairDark}" stroke-width="2.3" fill="none" stroke-linecap="round"/>
@@ -214,7 +223,8 @@
   // Front-facing pup (100 x 110 box).
   function dog({ face = 'smile', jacket = true } = {}) {
     const fur = nid('fu'), ear = nid('ea'), jk = nid('jk'), gl = nid('gl');
-    return `<g class="dog"><defs>${glowDef(gl)}
+    const pt = nid('pt');
+    return `<g class="dog"><defs>${glowDef(gl)}${paintDef(pt)}
         ${radial(fur, [[0, '#fffaf0'], [0.6, C.dog], [1, '#d9c09a']], '40%', '30%', '80%')}
         ${linear(ear, [[0, '#e9cfa6'], [1, '#c9a67a']])}
         ${radial(jk, [[0, '#d9d8e4'], [1, C.jacketDark]], '40%', '30%', '80%')}
@@ -227,7 +237,7 @@
       <rect x="35" y="94" width="10" height="14" rx="5" fill="${C.dogMuzzle}"/><rect x="55" y="94" width="10" height="14" rx="5" fill="${C.dogMuzzle}"/>
       <path class="ear" d="M30 30 C 12 18, 4 34, 14 48 C 20 54, 28 44, 30 36 Z" fill="url(#${ear})"/>
       <path class="ear" d="M70 30 C 88 18, 96 34, 86 48 C 80 54, 72 44, 70 36 Z" fill="url(#${ear})"/>
-      <ellipse cx="50" cy="40" rx="26" ry="24" fill="url(#${fur})" stroke="#d9c09a" stroke-width="0.8"/>
+      <ellipse cx="50" cy="40" rx="26" ry="24" fill="url(#${fur})" stroke="#d9c09a" stroke-width="0.8" filter="url(#${pt})"/>
       <path d="M30 22 q6 -6 14 -6 M56 16 q8 1 13 6" stroke="#fff" stroke-width="1.6" fill="none" opacity=".7" stroke-linecap="round"/>
       <path d="M74 32 Q78 44 72 56" stroke="#c9a2ff" stroke-width="3.5" fill="none" opacity=".55" stroke-linecap="round" filter="url(#${gl})"/>
       <ellipse cx="50" cy="52" rx="14" ry="10" fill="${C.dogMuzzle}"/>
