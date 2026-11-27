@@ -53,6 +53,7 @@ function prefetchAfter(context) {
       onSuccess: (resp) => ok({ data: resp.data }), onError: (e) => no(new Error(e && e.text || 'load failed')),
       onTimeout: () => no(new Error('timeout')), onAbort: () => no(new Error('aborted')),
     }));
+    p.loader = ld; // (its live progress is shown to the player while it waits for this piece)
     p.catch(() => { if (prefetched.get(url) === p) prefetched.delete(url); });
     prefetched.set(url, p);
   }
@@ -90,6 +91,18 @@ class ParallelFragmentLoader {
       prefetchAfter(context); // keep the pipeline full
       if (pre) {
         prefetched.delete(context.url);
+        // Mirror the download's progress, or the player thinks nothing is arriving, panics,
+        // drops the quality and records a near-zero speed (the "0.2 Mbps on strong Wi-Fi" bug).
+        const src = pre.loader && pre.loader.stats;
+        const mirror = () => {
+          if (!src) return;
+          stats.loaded = src.loaded;
+          if (src.total) stats.total = src.total;
+          if (src.loading.first && !stats.loading.first) stats.loading.first = Math.max(stats.loading.start, src.loading.first);
+        };
+        mirror();
+        const poll = setInterval(mirror, 100);
+        pre.finally(() => clearInterval(poll)).catch(() => {});
         pre.then(({ data }) => {
           if (stats.aborted) return;
           clearTimeout(this.timer);
@@ -730,7 +743,7 @@ function reportStatus() {
     t: 'status', movieId: meta.id, ct: video.currentTime, buffer: ahead, visible, error: playerError,
     full: dur > 0 && video.currentTime + ahead >= dur - 1,
     stalled, quality: qualityText(lv), shaky: isShaky(),
-    codec: lv && lv.videoCodec ? (/^(hvc1|hev1)/.test(lv.videoCodec) ? 'hevc' : 'avc') : '', bw: hls ? Math.round(hls.bandwidthEstimate || 0) : 0,
+    codec: lv && lv.videoCodec ? (/^(hvc1|hev1)/.test(lv.videoCodec) ? 'hevc' : 'avc') : '', bw: hls ? Math.round(Math.max(hls.bandwidthEstimate || 0, Meter.bps())) : 0, // (the speed actually measured on the downloads)
   });
 }
 setInterval(reportStatus, 1000);
