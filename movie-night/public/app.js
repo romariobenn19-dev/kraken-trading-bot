@@ -700,10 +700,12 @@ function maybeUpgradeBuffered() {
   if (!hls || !hls.autoLevelEnabled || !state || state.paused) return;
   const playing = hls.currentLevel;
   if (playing < 0 || bufferAhead() < 30 || Date.now() - lastUpgrade < 30000) return;
-  if (Date.now() - lastStallAt < 600000) return; // had a pause recently: smooth beats sharp
   // Re-downloading what's loaded costs buffer: only when the connection has been solid
   // for a minute and a half, with twice the room the sharper version needs.
   const bw = lowBandwidth(90000);
+  const top0 = hls.autoLevelCapping >= 0 ? hls.autoLevelCapping : hls.levels.length - 1;
+  const plenty = levelRate(top0) * 3 <= bw; // a fast connection: no reason to wait after a pause
+  if (!plenty && Date.now() - lastStallAt < 600000) return; // had a pause recently: smooth beats sharp
   const top = hls.autoLevelCapping >= 0 ? hls.autoLevelCapping : hls.levels.length - 1;
   let target = -1;
   for (let i = top; i > playing; i--) {
@@ -1759,9 +1761,13 @@ function tuneAbrForBuffer() {
   // ahead - up to 25 minutes - whenever the connection is good, so a long drop to 0.1 Mbps is
   // covered by what's already loaded. (360p is about 4 MB a minute, so this stays small.)
   if (!deepLoad && (isShaky() || (bwSamples.length > 5 && lowBandwidth(180000) < levelRate(0) * 1.3))) deepLoad = true;
-  hls.config.maxBufferLength = deepLoad ? 1500 : 120;
-  hls.config.maxMaxBufferLength = deepLoad ? 1800 : 300;
-  hls.config.maxBufferSize = (deepLoad ? 140 : 120) * 1000 * 1000;
+  // ...but a connection that loads the best quality 3x faster than it plays doesn't need it (and a deep
+  // cushion would only fill with lower quality that then has to be played through).
+  const best = deviceMaxLevel >= 0 ? deviceMaxLevel : hls.levels.length - 1;
+  const deep = deepLoad && !(bwSamples.length > 5 && lowBandwidth(90000) >= levelRate(best) * 3);
+  hls.config.maxBufferLength = deep ? 1500 : 120;
+  hls.config.maxMaxBufferLength = deep ? 1800 : 300;
+  hls.config.maxBufferSize = (deep ? 140 : 120) * 1000 * 1000;
   updateSmoothCap(ahead);
   // Smooth first: going sharper needs plenty of spare speed; staying put is easy.
   hls.config.abrBandWidthUpFactor = isShaky() ? 0.55 : 0.65;
@@ -1795,7 +1801,7 @@ const bwSamples = []; // [time, bits/s] over the last minute
 let lastStallAt = 0;
 setInterval(() => {
   if (!hls || !hls.bandwidthEstimate || hls.currentLevel < 0) return;
-  bwSamples.push([Date.now(), hls.bandwidthEstimate]);
+  bwSamples.push([Date.now(), Math.max(hls.bandwidthEstimate, Meter.bps())]);
   while (bwSamples.length && bwSamples[0][0] < Date.now() - 180000) bwSamples.shift();
 }, 2000);
 
