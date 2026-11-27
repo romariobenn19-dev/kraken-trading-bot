@@ -16,40 +16,99 @@
     white: '#ffffff', tear: '#8fd0ff', heart: '#e5484d',
   };
 
+  // ---- Illustrated style ----------------------------------------------------------
+  // Soft light from the upper left, warm skin highlights, glossy eyes with coloured irises,
+  // and a pink-lilac glow along the edges. Gradients get unique ids (many drawings share a page).
+  let uid = 0;
+  const nid = (p) => `${p}${(++uid).toString(36)}`;
+  /** A soft glow for the rim light (blurred, so it reads as light, not a line). */
+  const glowDef = (id) => `<filter id="${id}" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="1.6"/></filter>`;
+  const radial = (id, stops, cx = '40%', cy = '35%', r = '75%') =>
+    `<radialGradient id="${id}" cx="${cx}" cy="${cy}" r="${r}">${stops.map(([o, c, a = 1]) => `<stop offset="${o}" stop-color="${c}" stop-opacity="${a}"/>`).join('')}</radialGradient>`;
+  const linear = (id, stops, x2 = 0, y2 = 1) =>
+    `<linearGradient id="${id}" x1="0" y1="0" x2="${x2}" y2="${y2}">${stops.map(([o, c, a = 1]) => `<stop offset="${o}" stop-color="${c}" stop-opacity="${a}"/>`).join('')}</linearGradient>`;
+
+  /** A closed wavy outline round an ellipse (curly hair): n bumps from angle a0 to a1 (degrees). */
+  function wavy(cx, cy, rx, ry, n, a0, a1, bump = 1.13, close = '') {
+    const pt = (deg, k = 1) => { const t = (deg * Math.PI) / 180; return [(cx + Math.cos(t) * rx * k).toFixed(1), (cy + Math.sin(t) * ry * k).toFixed(1)]; };
+    let d = `M${pt(a0).join(' ')}`;
+    for (let i = 0; i < n; i++) {
+      const a = a0 + ((a1 - a0) * i) / n, b = a0 + ((a1 - a0) * (i + 1)) / n;
+      const k = bump + (i % 3 === 1 ? 0.05 : i % 3 === 2 ? -0.03 : 0);
+      d += ` Q${pt((a + b) / 2, k).join(' ')} ${pt(b).join(' ')}`;
+    }
+    return d + (close || ' Z');
+  }
+
   // ---- Faces ------------------------------------------------------------------
-  function eyes(face, lx, rx, y, s = 1, lashes = false) {
+  /** iris: [light, dark] colours of the eyes (open-eye faces). */
+  function eyes(face, lx, rx, y, s = 1, lashes = false, iris = ['#6b4527', '#2a170c']) {
     const ink = C.ink;
     const lash = (x, dir) => lashes
-      ? `<path d="M${x + dir * 5 * s} ${y - 4 * s} q${dir * 4 * s} -3 ${dir * 7 * s} -1" stroke="${ink}" stroke-width="${1.8 * s}" fill="none" stroke-linecap="round"/>` : '';
+      ? `<path d="M${x + dir * 6.5 * s} ${y - 3.2 * s} q${dir * 3.5 * s} -2.5 ${dir * 6 * s} -1.2 M${x + dir * 5 * s} ${y - 5 * s} q${dir * 2.5 * s} -3 ${dir * 4.5 * s} -3" stroke="${ink}" stroke-width="${1.5 * s}" fill="none" stroke-linecap="round"/>` : '';
+    const closed = (x, up) => `<path d="M${x - 7 * s} ${y + (up ? 2 : 0) * s} q${7 * s} ${(up ? -9 : 6) * s} ${14 * s} 0" stroke="${ink}" stroke-width="${2.4 * s}" fill="none" stroke-linecap="round"/>`;
+    const id = nid('ir');
+    const cols = iris === 'pet' ? ['#5a3a26', '#120a05'] : iris;
+    const defs = `<defs>${linear(id, [[0, cols[0]], [1, cols[1]]])}</defs>`;
+    // A glossy open eye: almond white, coloured iris, pupil, two sparkles, a strong upper lid.
+    const open = (x, dir, big = false) => {
+      if (iris === 'pet') {
+        return `<g class="blink"><ellipse cx="${x}" cy="${y}" rx="${(big ? 5.4 : 4.6) * s}" ry="${(big ? 6.2 : 5.4) * s}" fill="url(#${id})"/>
+          <circle cx="${x + 1.6 * s}" cy="${y - 2 * s}" r="${1.7 * s}" fill="#fff"/><circle cx="${x - 1.5 * s}" cy="${y + 2 * s}" r="${0.8 * s}" fill="#fff" opacity=".8"/></g>`;
+      }
+      const w = (big ? 8 : 7.2) * s, h = (big ? 7 : 5.6) * s, ir = (big ? 3.4 : 4.4) * s;
+      return `<g class="blink">
+        <path d="M${x - w} ${y} Q${x} ${y - h * 1.25} ${x + w} ${y} Q${x} ${y + h * 0.95} ${x - w} ${y} Z" fill="#fbf4ef"/>
+        <circle cx="${x}" cy="${y + 0.4 * s}" r="${ir}" fill="url(#${id})"/>
+        <circle cx="${x}" cy="${y + 0.4 * s}" r="${ir * 0.48}" fill="#140b06"/>
+        <path d="M${x - w} ${y} Q${x} ${y - h * 1.25} ${x + w} ${y}" fill="none" stroke="${ink}" stroke-width="${2.3 * s}" stroke-linecap="round"/>
+        <path d="M${x - w * 0.8} ${y + h * 0.55} Q${x} ${y + h * 1.05} ${x + w * 0.8} ${y + h * 0.5}" fill="none" stroke="${ink}" stroke-width="${0.7 * s}" opacity=".45"/>
+        <circle cx="${x + 1.6 * s}" cy="${y - 1.4 * s}" r="${1.5 * s}" fill="#fff"/>
+        <circle cx="${x - 1.7 * s}" cy="${y + 1.9 * s}" r="${0.75 * s}" fill="#fff" opacity=".85"/>
+      </g>${lash(x, dir)}`;
+    };
     switch (face) {
       case 'laugh':
-        return [lx, rx].map((x) => `<path d="M${x - 6 * s} ${y + 2 * s} q${6 * s} -9 ${12 * s} 0" stroke="${ink}" stroke-width="${2.6 * s}" fill="none" stroke-linecap="round"/>`).join('');
+        return [lx, rx].map((x) => closed(x, true)).join('');
       case 'love':
-        return [lx, rx].map((x) => heart(x, y, 7.5 * s, C.heart)).join('');
+        return [lx, rx].map((x) => heart(x, y, 7.5 * s, C.heart) + `<circle cx="${x - 2.5 * s}" cy="${y - 2.5 * s}" r="${1.4 * s}" fill="#fff" opacity=".8"/>`).join('');
       case 'cry':
-        return [lx, rx].map((x) => `<path d="M${x - 6 * s} ${y} q${6 * s} 6 ${12 * s} 0" stroke="${ink}" stroke-width="${2.6 * s}" fill="none" stroke-linecap="round"/>` +
-          `<path d="M${x - 2 * s} ${y + 4 * s} q-3 ${10 * s} 0 ${14 * s} q3 -${4 * s} 0 -${14 * s}z" fill="${C.tear}" class="tear"/>`).join('');
+        return [lx, rx].map((x) => closed(x, false) +
+          `<path d="M${x - 2 * s} ${y + 4 * s} q-3 ${10 * s} 0 ${14 * s} q3 -${4 * s} 0 -${14 * s}z" fill="${C.tear}" class="tear" opacity=".9"/>`).join('');
       case 'shock':
-        return [lx, rx].map((x) => `<circle cx="${x}" cy="${y}" r="${6.5 * s}" fill="${C.white}" stroke="${ink}" stroke-width="${2 * s}"/><circle cx="${x}" cy="${y}" r="${2.8 * s}" fill="${ink}"/>`).join('');
+        return defs + open(lx, -1, true) + open(rx, 1, true);
       case 'wink':
-        return `<g class="blink"><ellipse cx="${lx}" cy="${y}" rx="${4.2 * s}" ry="${5.2 * s}" fill="${ink}"/><circle cx="${lx + 1.5 * s}" cy="${y - 2 * s}" r="${1.5 * s}" fill="#fff"/></g>${lash(lx, -1)}` +
-          `<path d="M${rx - 6 * s} ${y + 1 * s} q${6 * s} -7 ${12 * s} 0" stroke="${ink}" stroke-width="${2.6 * s}" fill="none" stroke-linecap="round"/>`;
+        return defs + open(lx, -1) + `<path d="M${rx - 7 * s} ${y + 1 * s} q${7 * s} -8 ${14 * s} 0" stroke="${ink}" stroke-width="${2.4 * s}" fill="none" stroke-linecap="round"/>` + (lashes ? lash(rx, 1) : '');
       case 'sleepy':
-        return [lx, rx].map((x) => `<path d="M${x - 6 * s} ${y} h${12 * s}" stroke="${ink}" stroke-width="${2.6 * s}" stroke-linecap="round"/>`).join('');
+        return [lx, rx].map((x) => `<path d="M${x - 7 * s} ${y} q${7 * s} ${3.5 * s} ${14 * s} 0" stroke="${ink}" stroke-width="${2.3 * s}" fill="none" stroke-linecap="round"/>`).join('');
       default:
-        return [[lx, -1], [rx, 1]].map(([x, d]) =>
-          `<g class="blink"><ellipse cx="${x}" cy="${y}" rx="${4.2 * s}" ry="${5.2 * s}" fill="${ink}"/><circle cx="${x + 1.5 * s}" cy="${y - 2 * s}" r="${1.5 * s}" fill="#fff"/></g>${lash(x, d)}`).join('');
+        return defs + open(lx, -1) + open(rx, 1);
     }
   }
 
-  function mouth(face, x, y, s = 1, lip = C.ink) {
+  /** glossy: full two-tone lips with a highlight (her); otherwise a softer mouth. */
+  function mouth(face, x, y, s = 1, lip = C.ink, glossy = false) {
+    const id = nid('lp');
     switch (face) {
-      case 'laugh': return `<path d="M${x - 9 * s} ${y - 2 * s} q${9 * s} ${16 * s} ${18 * s} 0 z" fill="#7a2730"/><path d="M${x - 6 * s} ${y + 5 * s} q${6 * s} 4 ${12 * s} 0" fill="#e86f78"/>`;
-      case 'cry': return `<path d="M${x - 7 * s} ${y + 4 * s} q${7 * s} -8 ${14 * s} 0" stroke="${lip}" stroke-width="${2.6 * s}" fill="none" stroke-linecap="round"/>`;
-      case 'shock': return `<ellipse cx="${x}" cy="${y + 2 * s}" rx="${4.5 * s}" ry="${6 * s}" fill="#7a2730"/>`;
-      case 'love': return `<path d="M${x - 8 * s} ${y} q${8 * s} ${9 * s} ${16 * s} 0" stroke="${lip}" stroke-width="${2.8 * s}" fill="none" stroke-linecap="round"/>`;
-      case 'sleepy': return `<ellipse cx="${x}" cy="${y + 1 * s}" rx="${3 * s}" ry="${2.4 * s}" fill="${lip}"/>`;
-      default: return `<path d="M${x - 7 * s} ${y} q${7 * s} ${7 * s} ${14 * s} 0" stroke="${lip}" stroke-width="${2.6 * s}" fill="none" stroke-linecap="round"/>`;
+      case 'laugh':
+        return `<path d="M${x - 10 * s} ${y - 2 * s} q${10 * s} ${17 * s} ${20 * s} 0 z" fill="#6e1f2a"/>
+          <path d="M${x - 8 * s} ${y - 1.2 * s} q${8 * s} ${2.2 * s} ${16 * s} 0 l-${1 * s} ${2.4 * s} q-${7 * s} ${1.6 * s} -${14 * s} 0 z" fill="#fff"/>
+          <path d="M${x - 6 * s} ${y + 6 * s} q${6 * s} 4 ${12 * s} 0" fill="#e86f78"/>
+          ${glossy ? `<path d="M${x - 10 * s} ${y - 2 * s} q${10 * s} -${4 * s} ${20 * s} 0" stroke="${lip}" stroke-width="${2.6 * s}" fill="none" stroke-linecap="round"/>` : ''}`;
+      case 'cry': return `<path d="M${x - 7 * s} ${y + 4 * s} q${7 * s} -8 ${14 * s} 0" stroke="${glossy ? lip : '#5a2a22'}" stroke-width="${2.6 * s}" fill="none" stroke-linecap="round"/>`;
+      case 'shock': return `<ellipse cx="${x}" cy="${y + 2 * s}" rx="${4.5 * s}" ry="${6 * s}" fill="#6e1f2a"/>${glossy ? `<ellipse cx="${x}" cy="${y + 2 * s}" rx="${4.5 * s}" ry="${6 * s}" fill="none" stroke="${lip}" stroke-width="${2 * s}"/>` : ''}`;
+      case 'sleepy': return `<ellipse cx="${x}" cy="${y + 1 * s}" rx="${3.2 * s}" ry="${2.5 * s}" fill="${glossy ? lip : '#8a4a3c'}"/>`;
+      default:
+        if (!glossy) {
+          return `<path d="M${x - 8 * s} ${y} q${8 * s} ${8 * s} ${16 * s} 0" stroke="#3a1d16" stroke-width="${2.4 * s}" fill="none" stroke-linecap="round"/>
+            <path d="M${x - 5 * s} ${y + 4.5 * s} q${5 * s} ${2.5 * s} ${10 * s} 0" stroke="#a5644e" stroke-width="${2 * s}" fill="none" stroke-linecap="round" opacity=".8"/>`;
+        }
+        // A smile with full, glossy lips and a hint of teeth.
+        return `<defs>${linear(id, [[0, '#e0505c'], [1, lip]])}</defs>
+          <path d="M${x - 9 * s} ${y} Q${x - 4 * s} ${y - 3.5 * s} ${x} ${y - 1.6 * s} Q${x + 4 * s} ${y - 3.5 * s} ${x + 9 * s} ${y} Q${x} ${y + 2 * s} ${x - 9 * s} ${y} Z" fill="url(#${id})"/>
+          <path d="M${x - 8 * s} ${y + 0.6 * s} Q${x} ${y + 2.4 * s} ${x + 8 * s} ${y + 0.6 * s} L${x + 6.5 * s} ${y + 2.6 * s} Q${x} ${y + 3.8 * s} ${x - 6.5 * s} ${y + 2.6 * s} Z" fill="#fff"/>
+          <path d="M${x - 8 * s} ${y + 1 * s} Q${x} ${y + 11 * s} ${x + 8 * s} ${y + 1 * s} Q${x} ${y + 4.5 * s} ${x - 8 * s} ${y + 1 * s} Z" fill="url(#${id})"/>
+          <ellipse cx="${x + 1.5 * s}" cy="${y + 5.6 * s}" rx="${3.2 * s}" ry="${1.2 * s}" fill="#fff" opacity=".55"/>`;
     }
   }
 
@@ -58,68 +117,122 @@
   }
 
   function bow(x, y, s = 1, fill = C.bow, dark = C.bowDark) {
-    return `<g transform="translate(${x} ${y}) scale(${s})">
-      <path d="M0 0 C -10 -12, -24 -8, -22 2 C -20 12, -8 8, 0 0 z" fill="${fill}" stroke="${dark}" stroke-width="1.5"/>
-      <path d="M0 0 C 10 -12, 24 -8, 22 2 C 20 12, 8 8, 0 0 z" fill="${fill}" stroke="${dark}" stroke-width="1.5"/>
-      <path d="M-2 2 L -9 16 L -4 14 L -2 18 Z M2 2 L 9 16 L 4 14 L 2 18 Z" fill="${fill}" stroke="${dark}" stroke-width="1.2"/>
-      <circle cx="0" cy="0" r="4" fill="${dark}"/></g>`;
+    const id = nid('bw');
+    return `<g transform="translate(${x} ${y}) scale(${s})"><defs>${linear(id, [[0, '#f6c4bc'], [1, fill]])}</defs>
+      <path d="M0 0 C -10 -12, -24 -8, -22 2 C -20 12, -8 8, 0 0 z" fill="url(#${id})" stroke="${dark}" stroke-width="1.2"/>
+      <path d="M0 0 C 10 -12, 24 -8, 22 2 C 20 12, 8 8, 0 0 z" fill="url(#${id})" stroke="${dark}" stroke-width="1.2"/>
+      <path d="M-14 -5 q4 -3 9 0 M14 -5 q-4 -3 -9 0" stroke="#fff" stroke-width="1.4" fill="none" opacity=".6" stroke-linecap="round"/>
+      <path d="M-2 2 L -9 16 L -4 14 L -2 18 Z M2 2 L 9 16 L 4 14 L 2 18 Z" fill="url(#${id})" stroke="${dark}" stroke-width="1"/>
+      <circle cx="0" cy="0" r="4" fill="${dark}"/><circle cx="-1.2" cy="-1.2" r="1.3" fill="#fff" opacity=".5"/></g>`;
   }
 
-  const cheeks = (lx, rx, y, s = 1) =>
-    `<ellipse cx="${lx}" cy="${y}" rx="${6 * s}" ry="${3.6 * s}" fill="${C.blush}" opacity=".55"/><ellipse cx="${rx}" cy="${y}" rx="${6 * s}" ry="${3.6 * s}" fill="${C.blush}" opacity=".55"/>`;
+  const cheeks = (lx, rx, y, s = 1) => {
+    const id = nid('ck');
+    return `<defs>${radial(id, [[0, C.blush, 0.7], [1, C.blush, 0]], '50%', '50%', '50%')}</defs>
+      <ellipse cx="${lx}" cy="${y}" rx="${8 * s}" ry="${4.5 * s}" fill="url(#${id})"/><ellipse cx="${rx}" cy="${y}" rx="${8 * s}" ry="${4.5 * s}" fill="url(#${id})"/>`;
+  };
+
+  /** Shaded clothes (a soft knit), with a fold shadow and a light edge. */
+  function outfitShape(d, outfit, outfitDark, extra = '') {
+    const id = nid('of');
+    return `<defs>${radial(id, [[0, '#fffaf2'], [0.6, outfit], [1, outfitDark]], '35%', '20%', '95%')}</defs>
+      <path d="${d}" fill="url(#${id})" stroke="${outfitDark}" stroke-width="1.4"/>${extra}`;
+  }
 
   // ---- Characters (drawn in a 120 x 160 box, head centred at 60,54) -------------
   function him({ face = 'smile', body = true, outfit = C.cream, outfitDark = C.creamDark } = {}) {
-    return `<g class="him">
-      ${body ? `<path d="M18 160 Q20 110 60 104 Q100 110 102 160 Z" fill="${outfit}" stroke="${outfitDark}" stroke-width="2"/>
-        <path d="M60 106 V160" stroke="${outfitDark}" stroke-width="2"/><path d="M44 108 L60 124 L76 108" fill="none" stroke="${outfitDark}" stroke-width="2"/>
-        <rect x="51" y="88" width="18" height="20" rx="6" fill="${C.himSkinShade}"/>` : ''}
-      <circle cx="21" cy="58" r="8" fill="${C.himSkin}"/><circle cx="99" cy="58" r="8" fill="${C.himSkin}"/>
-      <ellipse cx="60" cy="54" rx="38" ry="41" fill="${C.himSkin}"/>
-      <path d="M23 46 Q22 12 60 12 Q98 12 97 46 Q94 30 82 27 Q60 22 38 27 Q26 30 23 46 Z" fill="${C.himHair}"/>
-      <path d="M24 56 Q24 90 60 96 Q96 90 96 56 Q92 76 80 80 Q70 84 60 84 Q50 84 40 80 Q28 76 24 56 Z" fill="${C.himBeard}"/>
-      <path d="M45 69 Q60 63 75 69 Q68 72 60 70 Q52 72 45 69 Z" fill="${C.himBeard}"/>
-      <path d="M38 40 q8 -4 15 -1 M67 39 q7 -3 15 1" stroke="${C.himHair}" stroke-width="3.5" fill="none" stroke-linecap="round"/>
-      ${eyes(face, 45, 75, 50)}
-      ${cheeks(36, 84, 62)}
+    const sk = nid('sk'), hr = nid('hr'), bd = nid('bd'), rim = nid('rm'), gl = nid('gl');
+    return `<g class="him"><defs>${glowDef(gl)}
+        ${radial(sk, [[0, '#a8694a'], [0.55, C.himSkin], [1, '#4e2c1d']], '38%', '30%', '80%')}
+        ${linear(hr, [[0, '#3a2a24'], [1, '#120c09']])}
+        ${linear(bd, [[0, '#2e1f17'], [1, '#160e0a']])}
+        ${linear(rim, [[0, '#ffb3c7', 0], [1, '#ffb3c7', 0.85]], 1, 0)}
+      </defs>
+      ${body ? outfitShape('M18 160 Q20 110 60 104 Q100 110 102 160 Z', outfit, outfitDark,
+        `<path d="M60 106 V160" stroke="${outfitDark}" stroke-width="1.6"/><path d="M44 108 L60 124 L76 108" fill="none" stroke="${outfitDark}" stroke-width="1.6"/>
+        <path d="M30 150 Q34 128 46 118" stroke="#fff" stroke-width="2" fill="none" opacity=".5"/>
+        <rect x="51" y="86" width="18" height="22" rx="6" fill="${C.himSkinShade}"/><path d="M51 96 Q60 104 69 96 V108 H51 Z" fill="#3a2016" opacity=".5"/>`) : ''}
+      <ellipse cx="21" cy="58" rx="7.5" ry="9" fill="url(#${sk})"/><ellipse cx="99" cy="58" rx="7.5" ry="9" fill="url(#${sk})"/>
+      <path d="M19 55 q3 4 1 8 M101 55 q-3 4 -1 8" stroke="#4e2c1d" stroke-width="1.4" fill="none" opacity=".7"/>
+      <ellipse cx="60" cy="54" rx="38" ry="41" fill="url(#${sk})" stroke="#4a2a1b" stroke-width="1"/>
+      <path d="M96 40 Q100 62 88 84" stroke="url(#${rim})" stroke-width="4" fill="none" stroke-linecap="round" filter="url(#${gl})"/>
+      <path d="M23 46 Q22 12 60 12 Q98 12 97 46 Q94 30 82 27 Q60 22 38 27 Q26 30 23 46 Z" fill="url(#${hr})"/>
+      <path d="M30 30 Q44 18 64 18 M38 24 Q56 15 80 20 M72 17 Q88 20 94 32" stroke="#6b5a52" stroke-width="1.6" fill="none" opacity=".55" stroke-linecap="round"/>
+      <path d="M26 44 Q30 32 40 28" stroke="#c9a2ff" stroke-width="3" fill="none" opacity=".5" stroke-linecap="round" filter="url(#${gl})"/>
+      <path d="M24 56 Q24 90 60 96 Q96 90 96 56 Q92 76 80 80 Q70 84 60 84 Q50 84 40 80 Q28 76 24 56 Z" fill="url(#${bd})"/>
+      <path d="M45 69 Q60 63 75 69 Q68 72 60 70 Q52 72 45 69 Z" fill="url(#${bd})"/>
+      <path d="M32 80 l2 4 M40 86 l1 4 M50 89 l1 4 M70 89 l-1 4 M80 86 l-1 4 M88 80 l-2 4 M46 66 l3 -1 M71 65 l3 1" stroke="#4a3a32" stroke-width="1" opacity=".6" stroke-linecap="round"/>
+      <path d="M38 40 q8 -4 15 -1 M67 39 q7 -3 15 1" stroke="#140c08" stroke-width="3.6" fill="none" stroke-linecap="round"/>
+      <path d="M56 54 Q53 62 55 64 Q60 67 65 64 Q67 62 64 54" fill="none" stroke="#4e2c1d" stroke-width="1.3" opacity=".75" stroke-linecap="round"/>
+      <ellipse cx="61" cy="61" rx="2.2" ry="1.3" fill="#d39a78" opacity=".6"/>
+      <ellipse cx="44" cy="35" rx="9" ry="3" fill="#fff" opacity=".1"/>
+      ${eyes(face, 45, 75, 50, 1.15, false, ['#7a4f2c', '#2a170c'])}
+      ${cheeks(34, 86, 62, 0.9)}
       ${mouth(face, 60, 75, 1, '#f1c9b8')}
     </g>`;
   }
 
   function her({ face = 'smile', body = true, outfit = C.cream, outfitDark = C.creamDark, bowOn = true } = {}) {
-    return `<g class="her">
-      <path d="M17 52 Q10 118 20 158 L100 158 Q110 118 103 52 Q100 8 60 8 Q20 8 17 52 Z" fill="${C.herHair}"/>
-      ${body ? `<path d="M22 160 Q24 112 60 106 Q96 112 98 160 Z" fill="${outfit}" stroke="${outfitDark}" stroke-width="2"/>
-        <path d="M30 128 Q60 140 90 128" stroke="${outfitDark}" stroke-width="2" fill="none"/>
-        <rect x="52" y="88" width="16" height="20" rx="6" fill="${C.herSkinShade}"/>
-        <path d="M20 100 Q14 132 26 158 L36 158 Q28 128 34 104 Z M100 100 Q106 132 94 158 L84 158 Q92 128 86 104 Z" fill="${C.herHair}"/>` : ''}
-      <ellipse cx="60" cy="56" rx="35" ry="38" fill="${C.herSkin}"/>
-      <path d="M24 60 Q20 14 62 12 Q100 14 98 58 Q94 36 78 28 Q66 40 40 44 Q30 48 24 60 Z" fill="${C.herHair}"/>
-      <path d="M78 28 Q86 40 96 44" stroke="${C.herHairDark}" stroke-width="2" fill="none"/>
-      <path d="M38 44 q7 -4 14 -1 M68 43 q7 -3 14 1" stroke="${C.herHairDark}" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-      ${eyes(face, 45, 75, 55, 1, true)}
-      ${cheeks(35, 85, 67)}
-      ${mouth(face, 60, 77, 1, C.lips)}
-      ${face === 'smile' || face === 'wink' ? `<path d="M53 77 q7 6 14 0 q-7 2 -14 0z" fill="${C.lips}"/>` : ''}
+    const sk = nid('sk'), hr = nid('hr'), hl = nid('hl'), rim = nid('rm'), gl = nid('gl');
+    // Flowing curly hair: a wavy mass, strands with light running through them, loose curls, swept bangs.
+    const strand = (d, light) => `<path d="${d}" stroke="${light ? '#ec9468' : C.herHairDark}" stroke-width="${light ? 1.6 : 1.3}" fill="none" opacity="${light ? 0.8 : 0.55}" stroke-linecap="round"/>`;
+    const tendril = (x, y, dir, len) => `<path d="M${x} ${y} q${dir * 6} ${len * 0.3} 0 ${len * 0.55} q${-dir * 6} ${len * 0.25} 0 ${len * 0.45}" stroke="url(#${hr})" stroke-width="5" fill="none" stroke-linecap="round"/>
+      <path d="M${x} ${y} q${dir * 6} ${len * 0.3} 0 ${len * 0.55}" stroke="#ec9468" stroke-width="1.2" fill="none" opacity=".7" stroke-linecap="round"/>`;
+    return `<g class="her"><defs>${glowDef(gl)}
+        ${radial(sk, [[0, '#fff3ea'], [0.55, C.herSkin], [1, '#e2b29b']], '40%', '32%', '80%')}
+        ${radial(hr, [[0, '#d26a42'], [0.6, C.herHair], [1, '#6a2817']], '38%', '28%', '80%')}
+        ${linear(hl, [[0, '#d97a50'], [1, C.herHairDark]])}
+        ${linear(rim, [[0, '#c9a2ff', 0], [1, '#c9a2ff', 0.9]], 1, 0)}
+      </defs>
+      <path d="${body ? wavy(60, 82, 50, 80, 17, 128, 412, 1.09) : wavy(60, 66, 50, 64, 15, 150, 390, 1.1)}" fill="url(#${hr})"/>
+      ${strand('M30 30 Q14 70 22 120', true)}${strand('M90 30 Q106 70 98 120', true)}
+      ${strand('M24 44 Q12 88 26 140')}${strand('M96 44 Q108 88 94 140')}
+      ${strand('M40 18 Q20 40 18 76', true)}${strand('M80 18 Q100 40 102 76')}
+      ${body ? outfitShape('M22 160 Q24 112 60 106 Q96 112 98 160 Z', outfit, outfitDark,
+        `<path d="M30 128 Q60 140 90 128" stroke="${outfitDark}" stroke-width="1.6" fill="none"/>
+        <path d="M32 152 Q36 130 48 120" stroke="#fff" stroke-width="2" fill="none" opacity=".5"/>
+        <rect x="52" y="86" width="16" height="22" rx="6" fill="${C.herSkinShade}"/><path d="M52 95 Q60 103 68 95 V108 H52 Z" fill="#c98f78" opacity=".55"/>
+        <path d="M20 104 Q14 132 22 158 L34 158 Q28 130 32 106 Z M100 104 Q106 132 98 158 L86 158 Q92 130 88 106 Z" fill="url(#${hr})"/>
+        ${strand('M24 106 Q19 130 26 156', true)}${strand('M96 106 Q101 130 94 156', true)}`) : ''}
+      <ellipse cx="60" cy="56" rx="35" ry="38" fill="url(#${sk})" stroke="#d9a58c" stroke-width="1"/>
+      <path d="M93 46 Q97 66 86 86" stroke="url(#${rim})" stroke-width="4" fill="none" stroke-linecap="round" filter="url(#${gl})"/>
+      <path d="M30 50 Q40 44 54 42" stroke="#b9715a" stroke-width="6" fill="none" opacity=".16" stroke-linecap="round"/>
+      <path d="M22 58 Q18 22 60 12 Q102 16 99 54 Q95 40 88 36 Q86 44 78 42 Q74 33 66 34 Q60 41 52 36 Q46 31 40 38 Q34 46 28 44 Q24 50 22 58 Z" fill="url(#${hl})"/>
+      ${strand('M30 40 Q42 18 66 16', true)}${strand('M58 18 Q82 18 94 36', true)}${strand('M44 36 Q54 24 72 22')}${strand('M76 26 Q86 30 90 40')}
+      <path d="M102 26 Q112 50 104 76" stroke="#c9a2ff" stroke-width="4" fill="none" opacity=".6" stroke-linecap="round" filter="url(#${gl})"/>
+      <path d="M38 45 q7 -4 14 -1 M68 44 q7 -3 14 1" stroke="${C.herHairDark}" stroke-width="2.3" fill="none" stroke-linecap="round"/>
+      <path d="M58 58 Q56 65 58 67 Q61 69 64 67" fill="none" stroke="#c98f78" stroke-width="1.2" stroke-linecap="round"/>
+      <ellipse cx="61" cy="64.5" rx="1.6" ry="1" fill="#fff" opacity=".7"/>
+      <ellipse cx="74" cy="47" rx="7" ry="2.2" fill="#fff" opacity=".22"/>
+      ${eyes(face, 45, 75, 55, 1, true, ['#9bb86a', '#3e5a2a'])}
+      ${cheeks(34, 86, 68)}
+      ${mouth(face, 60, 78, 1.2, C.lips, true)}
       ${bowOn ? bow(88, 20, 0.85) : ''}
     </g>`;
   }
 
   // Front-facing pup (100 x 110 box).
   function dog({ face = 'smile', jacket = true } = {}) {
-    return `<g class="dog">
+    const fur = nid('fu'), ear = nid('ea'), jk = nid('jk'), gl = nid('gl');
+    return `<g class="dog"><defs>${glowDef(gl)}
+        ${radial(fur, [[0, '#fffaf0'], [0.6, C.dog], [1, '#d9c09a']], '40%', '30%', '80%')}
+        ${linear(ear, [[0, '#e9cfa6'], [1, '#c9a67a']])}
+        ${radial(jk, [[0, '#d9d8e4'], [1, C.jacketDark]], '40%', '30%', '80%')}
+      </defs>
       <path class="tail" d="M74 82 C 96 74, 100 52, 86 48 C 78 46, 80 58, 88 58" stroke="${C.dog}" stroke-width="9" fill="none" stroke-linecap="round"/>
-      <ellipse cx="50" cy="84" rx="26" ry="22" fill="${C.dog}"/>
-      ${jacket ? `<path d="M26 80 Q30 64 50 64 Q70 64 74 80 Q72 96 50 98 Q28 96 26 80 Z" fill="${C.jacket}" stroke="${C.jacketDark}" stroke-width="1.5"/>
-        <path d="M34 72 L66 92 M40 66 L72 86 M28 84 L58 98 M66 70 L36 94 M74 82 L50 98 M58 66 L30 86" stroke="${C.jacketDark}" stroke-width="1" opacity=".7"/>
-        <path d="M36 66 Q50 74 64 66" stroke="#2b2b33" stroke-width="3" fill="none"/>` : ''}
+      <ellipse cx="50" cy="84" rx="26" ry="22" fill="url(#${fur})"/>
+      ${jacket ? `<path d="M26 80 Q30 64 50 64 Q70 64 74 80 Q72 96 50 98 Q28 96 26 80 Z" fill="url(#${jk})" stroke="${C.jacketDark}" stroke-width="1.2"/>
+        <path d="M34 72 L66 92 M40 66 L72 86 M28 84 L58 98 M66 70 L36 94 M74 82 L50 98 M58 66 L30 86" stroke="${C.jacketDark}" stroke-width="1" opacity=".6"/>
+        <path d="M36 66 Q50 74 64 66" stroke="#2b2b33" stroke-width="3" fill="none"/><circle cx="50" cy="72" r="2.2" fill="#e8c35a"/>` : ''}
       <rect x="35" y="94" width="10" height="14" rx="5" fill="${C.dogMuzzle}"/><rect x="55" y="94" width="10" height="14" rx="5" fill="${C.dogMuzzle}"/>
-      <path class="ear" d="M30 30 C 12 18, 4 34, 14 48 C 20 54, 28 44, 30 36 Z" fill="${C.dogShade}"/>
-      <path class="ear" d="M70 30 C 88 18, 96 34, 86 48 C 80 54, 72 44, 70 36 Z" fill="${C.dogShade}"/>
-      <ellipse cx="50" cy="40" rx="26" ry="24" fill="${C.dog}"/>
+      <path class="ear" d="M30 30 C 12 18, 4 34, 14 48 C 20 54, 28 44, 30 36 Z" fill="url(#${ear})"/>
+      <path class="ear" d="M70 30 C 88 18, 96 34, 86 48 C 80 54, 72 44, 70 36 Z" fill="url(#${ear})"/>
+      <ellipse cx="50" cy="40" rx="26" ry="24" fill="url(#${fur})" stroke="#d9c09a" stroke-width="0.8"/>
+      <path d="M30 22 q6 -6 14 -6 M56 16 q8 1 13 6" stroke="#fff" stroke-width="1.6" fill="none" opacity=".7" stroke-linecap="round"/>
+      <path d="M74 32 Q78 44 72 56" stroke="#c9a2ff" stroke-width="3.5" fill="none" opacity=".55" stroke-linecap="round" filter="url(#${gl})"/>
       <ellipse cx="50" cy="52" rx="14" ry="10" fill="${C.dogMuzzle}"/>
-      <ellipse cx="50" cy="46" rx="5.5" ry="4" fill="${C.dogNose}"/>
-      ${eyes(face, 40, 60, 37, 0.85)}
+      <ellipse cx="50" cy="46" rx="5.8" ry="4.2" fill="${C.dogNose}"/><ellipse cx="48.4" cy="44.6" rx="1.8" ry="1" fill="#fff" opacity=".7"/>
+      ${eyes(face, 40, 60, 37, 0.85, false, 'pet')}
       ${face === 'laugh' || face === 'shock' ? mouth(face, 50, 54, 0.6) : `<path d="M44 54 q6 5 12 0" stroke="${C.ink}" stroke-width="1.8" fill="none" stroke-linecap="round"/>`}
       ${face === 'smile' || face === 'love' ? `<path d="M48 56 q2 7 4 0 z" fill="#ef8a95"/>` : ''}
     </g>`;
