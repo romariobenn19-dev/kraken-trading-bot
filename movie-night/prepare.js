@@ -60,9 +60,9 @@ const HEVC_LADDER = [
   // The lightest version (lighter sound too, it's a big share of its data).
   { label: '360p',  width: 640,  kbps: 420,  codec: 'hvc1.1.6.L90.90', audio: 96 },
 ];
-// Fallback for devices/browsers without HEVC support.
+// Fallback for devices/browsers without HEVC support. (No full-strength 5 Mbps 1080p: a device
+// without HEVC on a fast connection doesn't exist for us, and it cost ~4.5 GB per film.)
 const AVC_LADDER = [
-  { label: '1080p', width: 1920, kbps: 5000, codec: 'avc1.640028' },
   { label: '1080p', tag: 'lite', width: 1920, kbps: 2400, codec: 'avc1.640028' },
   { label: '720p',  width: 1280, kbps: 2500, codec: 'avc1.64001f' },
   { label: '480p',  width: 854,  kbps: 1100, codec: 'avc1.64001e' },
@@ -414,8 +414,7 @@ async function main() {
     const QUICK = new Set(['1080p-hq', '1080p', '1080p-lite', '480p', '360p']);
     const has1080 = jobs.some((j) => j.label === '1080p');
     if (!has1080) QUICK.add('720p');
-    // (1080p H.264 stays: it's what a tablet without HEVC would watch.)
-    const quick = jobs.filter((j) => QUICK.has(`${j.label}${j.tag ? `-${j.tag}` : ''}`) || j.tag === 'src' || (j.family === 'avc' && j.label === '1080p'));
+    const quick = jobs.filter((j) => QUICK.has(`${j.label}${j.tag ? `-${j.tag}` : ''}`) || j.tag === 'src');
     if (quick.length) jobs = quick;
   }
 
