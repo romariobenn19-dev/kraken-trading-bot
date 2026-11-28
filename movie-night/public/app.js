@@ -1042,6 +1042,44 @@ $('updateBtn').onclick = async () => {
   finally { btn.disabled = false; btn.textContent = 'Check for updates'; }
 };
 
+// ---- Free up space (laptop) --------------------------------------------------------
+const gb = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(n / 1e6))} MB`);
+function renderSpace(r) {
+  $('spaceTotal').textContent = `Movie Night is using ${gb(r.total)} for ${r.films.length} movie${r.films.length === 1 ? '' : 's'} and episodes.`;
+  $('spaceExtra').classList.toggle('hidden', r.extra < 5e6);
+  $('spaceExtraSize').textContent = gb(r.extra);
+  const list = $('spaceList');
+  list.innerHTML = '';
+  for (const f of r.films) {
+    const row = document.createElement('div');
+    row.className = 'space-row' + (f.watched ? ' watched' : '');
+    const name = document.createElement('span'); name.className = 'space-name'; name.textContent = (f.watched ? '✓ ' : '') + f.title;
+    const size = document.createElement('span'); size.className = 'space-size'; size.textContent = gb(f.bytes);
+    const del = document.createElement('button'); del.className = 'ghost small'; del.textContent = 'Delete';
+    del.disabled = f.busy; if (f.busy) del.title = 'Playing or converting right now';
+    del.onclick = async () => {
+      if (!confirm(`Delete "${f.title}" from Movie Night (${gb(f.bytes)})? Your original movie file is not touched.`)) return;
+      del.disabled = true;
+      try { await api('/api/host/delete', { id: f.id }); toast(`Deleted - ${gb(f.bytes)} freed.`); openSpace(); } catch (e) { toast(e.message); del.disabled = false; }
+    };
+    row.append(name, size, del);
+    list.appendChild(row);
+  }
+}
+async function openSpace() {
+  $('spaceDialog').classList.remove('hidden');
+  try { renderSpace(await api('/api/host/storage', {})); } catch (e) { $('spaceTotal').textContent = e.message; }
+}
+$('spaceBtn').onclick = openSpace;
+$('spaceClose').onclick = () => $('spaceDialog').classList.add('hidden');
+$('spaceFree').onclick = async () => {
+  const btn = $('spaceFree');
+  btn.disabled = true; btn.textContent = 'Freeing…';
+  try { const r = await api('/api/host/free-space', {}); toast(`Freed ${gb(r.freed)}.`); renderSpace(r); }
+  catch (e) { toast(e.message); }
+  finally { btn.disabled = false; btn.textContent = 'Free it up'; }
+};
+
 async function deleteMovie(mv) {
   if (!confirm(`Delete "${mv.title}" from Movie Night? Your original movie file is not touched.`)) return;
   try { await api('/api/host/delete', { id: mv.id }); toast('Deleted.'); } catch (e) { toast(e.message); }

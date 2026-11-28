@@ -60,6 +60,7 @@
         </div>
         <button id="personalBtn" class="ghost small">🎀 Personalize</button>
         <button id="updateBtn" class="ghost small">Check for updates</button>
+        <button id="spaceBtn" class="ghost small">💾 Free up space</button>
       </div>
       <div id="watchRow" class="watch-row hidden">
         <span>📂 <b>Auto-add folder:</b> save movies (and their subtitle files) in <code id="watchPath">…</code> and they're added by themselves.</span>
@@ -215,6 +216,25 @@
   </div>
 
   <!-- Subtitles for a movie that's already in the library (host only) -->
+  <div id="spaceDialog" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="spaceTitle">
+    <div class="sheet">
+      <header class="sheet-head">
+        <b id="spaceTitle">💾 Free up space</b>
+        <button id="spaceClose" class="ghost small" aria-label="Close">✕</button>
+      </header>
+      <div class="confirm">
+        <p id="spaceTotal" class="muted">Working out what's using space…</p>
+        <div id="spaceExtra" class="space-extra hidden">
+          <div><b id="spaceExtraSize"></b> can go without changing anything you watch: extra copies nobody uses (4K and 1440p, your screens are 1080p; a second H.264 1080p) and leftovers from interrupted conversions.</div>
+          <button id="spaceFree" class="primary">Free it up</button>
+        </div>
+        <div class="field-title">Your movies and episodes <span class="muted small">(biggest first · ✓ = you've watched it)</span></div>
+        <div id="spaceList" class="space-list"></div>
+        <p class="muted small">Deleting only removes Movie Night's copy. Your original movie files aren't touched.</p>
+      </div>
+    </div>
+  </div>
+
   <div id="subsDialog" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="subsDialogTitle">
     <div class="sheet">
       <header class="sheet-head">

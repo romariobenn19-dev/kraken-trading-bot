@@ -104,7 +104,7 @@ function killTree(proc) {
   else proc.kill();
 }
 
-module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendToHosts, libraryChanged, links, onMovieDeleted, restart, savePersonal, openPhotosFolder, httpsStatus, retryHttps, tmdb, onMovieReady, watching = () => false }) {
+module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendToHosts, libraryChanged, links, onMovieDeleted, restart, savePersonal, openPhotosFolder, httpsStatus, retryHttps, tmdb, onMovieReady, watching = () => false, currentMovie = () => null }) {
   const FFMPEG = findTool('ffmpeg');
   const FFPROBE = findTool('ffprobe');
   const version = () => JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
@@ -182,7 +182,8 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
     runningJobs.add(job);
     job.status = 'running';
     job.startedAt = Date.now();
-    const args = [path.join(ROOT, 'prepare.js'), job.file, '--title', job.title, '--progress-json'];
+    // Up to 1080p: your screens are 1080p, and 4K/1440p versions cost ~12 GB per film.
+    const args = [path.join(ROOT, 'prepare.js'), job.file, '--title', job.title, '--progress-json', '--max', '1080'];
     if (job.denoise) args.push('--denoise');
     if (job.skipAvc) args.push('--no-avc');
     if (job.skipHevc) args.push('--no-hevc');
@@ -483,6 +484,8 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
         pushJobs(true);
         return json(res, 200, {});
       }
+      if (pathname === '/api/host/storage') return json(res, 200, storageReport());
+      if (pathname === '/api/host/free-space') return json(res, 200, { freed: freeSpace(), ...storageReport() });
       if (pathname === '/api/host/delete') {
         const id = String(body.id || '');
         if (!/^[a-z0-9-]+$/.test(id)) return json(res, 400, { error: 'Bad movie id' });
@@ -657,6 +660,94 @@ module.exports = function createHost({ ROOT, LIBRARY, config, saveConfig, sendTo
       } catch { /* not a movie folder, or no original file: leave it */ }
     }
   }
+  // ---- Disk space (the "Free up space" panel on the laptop) -----------------------------------------
+  function dirSize(dir) {
+    let n = 0;
+    let list = [];
+    try { list = fs.readdirSync(dir, { withFileTypes: true }); } catch { return 0; }
+    for (const e of list) {
+      const f = path.join(dir, e.name);
+      if (e.isDirectory()) n += dirSize(f);
+      else { try { n += fs.statSync(f).size; } catch { /* gone */ } }
+    }
+    return n;
+  }
+  /** Versions in a movie folder that aren't needed: unused leftovers, H.264 1080p (has Lite), 4K/1440p (has 1080p). */
+  function extraVersions(dir, meta) {
+    const done = (d) => fs.existsSync(path.join(dir, d, '.done'));
+    const drop = new Set();
+    if (done('1080p_avc') && done('1080p-lite_avc')) drop.add('1080p_avc');
+    if (done('1080p-hq_hevc') || done('1080p_hevc')) for (const d of ['2160p_hevc', '1440p_hevc']) if (fs.existsSync(path.join(dir, d))) drop.add(d);
+    const used = new Set((meta.renditions || []).map((r) => r.dir));
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { /* none */ }
+    for (const e of entries) if (e.isDirectory() && /_(hevc|avc)$/.test(e.name) && !used.has(e.name)) drop.add(e.name);
+    return drop;
+  }
+  const busyMovie = (id) => id === currentMovie() || jobs.some((j) => j.movieId === id && ['queued', 'running'].includes(j.status));
+  function watchedIds() {
+    try {
+      const d = JSON.parse(fs.readFileSync(path.join(ROOT, 'data.json'), 'utf8'));
+      return new Set((d.diary || []).map((e) => e.movieId).filter(Boolean));
+    } catch { return new Set(); }
+  }
+  function storageReport() {
+    let ids = [];
+    try { ids = fs.readdirSync(LIBRARY); } catch { /* empty */ }
+    const watched = watchedIds();
+    const films = [];
+    let extra = 0;
+    for (const id of ids) {
+      const dir = path.join(LIBRARY, id);
+      let meta;
+      try { meta = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8')); } catch { continue; }
+      const bytes = dirSize(dir);
+      let spare = 0;
+      if (!meta.partial && !meta.converting && !busyMovie(id)) for (const d of extraVersions(dir, meta)) spare += dirSize(path.join(dir, d));
+      extra += spare;
+      films.push({ id, title: meta.title || id, bytes, spare, watched: watched.has(id), busy: busyMovie(id) });
+    }
+    films.sort((a, b) => b.bytes - a.bytes);
+    return { films, extra, total: films.reduce((n, f) => n + f.bytes, 0) };
+  }
+  /** Remove the versions nobody needs (playlists updated first, so nobody is sent to them). */
+  function freeSpace() {
+    let ids = [], freed = 0;
+    try { ids = fs.readdirSync(LIBRARY); } catch { return 0; }
+    for (const id of ids) {
+      if (busyMovie(id)) continue;
+      const dir = path.join(LIBRARY, id);
+      let meta;
+      try { meta = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8')); } catch { continue; }
+      if (meta.partial || meta.converting) continue;
+      const drop = extraVersions(dir, meta);
+      if (!drop.size) continue;
+      try {
+        for (const key of ['hevc', 'avc']) {
+          if (!meta[key]) continue;
+          const f = path.join(dir, meta[key]);
+          const lines = fs.readFileSync(f, 'utf8').split('\n');
+          const out = [];
+          for (let i = 0; i < lines.length; i++) {
+            if (lines[i].startsWith('#EXT-X-STREAM-INF') && drop.has((lines[i + 1] || '').split('/')[0])) { i++; continue; }
+            out.push(lines[i]);
+          }
+          fs.writeFileSync(`${f}.tmp`, out.join('\n')); fs.renameSync(`${f}.tmp`, f);
+        }
+        meta.renditions = (meta.renditions || []).filter((r) => !drop.has(r.dir));
+        const mf = path.join(dir, 'meta.json');
+        fs.writeFileSync(`${mf}.tmp`, JSON.stringify(meta, null, 2)); fs.renameSync(`${mf}.tmp`, mf);
+      } catch { continue; }
+      for (const d of drop) {
+        const sub = path.join(dir, d);
+        const size = dirSize(sub);
+        try { fs.rmSync(sub, { recursive: true, force: true }); freed += size; } catch { /* in use: try again later */ }
+      }
+    }
+    if (freed) { console.log(`  Freed ${freed >= 1e9 ? (freed / 1e9).toFixed(1) + " GB" : Math.round(freed / 1e6) + " MB"} (versions no longer needed).`); libraryChanged(); }
+    return freed;
+  }
+
   // Conversions stopped by an update carry on after the restart (before the top-up check).
   try {
     const saved = JSON.parse(fs.readFileSync(QUEUE_FILE, 'utf8'));
